@@ -65,7 +65,7 @@
   }
 
   /* ================= storage (localStorage) ================= */
-  const KEY = { visions: 'vm.visions', draft: 'vm.draft', settings: 'vm.settings' };
+  const KEY = { visions: 'vm.visions', drafts: 'vm.drafts', oldDraft: 'vm.draft', settings: 'vm.settings' };
   const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } };
   const save = (k, v) => {
     try { localStorage.setItem(k, JSON.stringify(v)); return true; }
@@ -85,10 +85,22 @@
     remove: (id) => save(KEY.visions, store.all().filter((v) => v.id !== id)),
     settings: () => ({ apiKey: '', model: 'gemini-flash-latest', ...load(KEY.settings, {}) }),
     saveSettings: (s) => save(KEY.settings, s),
-    draft: () => load(KEY.draft, null),
-    saveDraft: (d) => save(KEY.draft, d),
-    clearDraft: () => localStorage.removeItem(KEY.draft)
+    // 書きかけの対話（複数可）。発言のあるものだけ保存する
+    drafts: () => load(KEY.drafts, []).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
+    getDraft: (id) => store.drafts().find((d) => d.id === id),
+    saveDraft(d) {
+      d.updatedAt = Date.now();
+      return save(KEY.drafts, [d, ...store.drafts().filter((x) => x.id !== d.id)]);
+    },
+    removeDraft: (id) => save(KEY.drafts, store.drafts().filter((d) => d.id !== id)),
+    clearDrafts: () => localStorage.removeItem(KEY.drafts)
   };
+  // 旧形式（書きかけ1件のみ）からの移行
+  (() => {
+    const old = load(KEY.oldDraft, null);
+    if (old && old.msgs) store.saveDraft(old);
+    localStorage.removeItem(KEY.oldDraft);
+  })();
   // ブラウザによる自動削除を防ぐ
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
@@ -318,6 +330,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     const [name, id] = h.split('/');
     window.scrollTo(0, 0);
     if (name === 'new') viewNew();
+    else if (name === 'd' && id) viewNew(id);
     else if (name === 'v' && id) viewVision(id);
     else if (name === 'settings') viewSettings();
     else viewHome();
@@ -331,7 +344,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
 
   function viewHome() {
     const list = store.all();
-    const draft = store.draft();
+    const drafts = store.drafts().filter((d) => d.msgs?.some((m) => m.role === 'me'));
     const shown = filter === 'all' ? list : list.filter((v) => (v.status || 'active') === filter);
     app.innerHTML = `
       <header class="bar">
@@ -339,7 +352,15 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         <button class="icon-btn" data-go="settings" aria-label="設定">${icon('sliders')}</button>
       </header>
       <main class="view-enter">
-        ${draft && draft.msgs?.some((m) => m.role === 'me') ? `<button class="draft" data-go="new">${icon('resume')}<span>書きかけのビジョンがあります</span>${icon('back', 'flip')}</button>` : ''}
+        ${drafts.length ? `
+          <div class="drafts">
+            <div class="drafts-head">書きかけ</div>
+            ${drafts.map((d) => `
+              <button class="draft" data-go="d/${esc(d.id)}">${icon('resume')}
+                <span>${esc(d.msgs.find((m) => m.role === 'me').text)}</span>
+                <time>${fmtDate(d.updatedAt || d.createdAt)}</time>
+              </button>`).join('')}
+          </div>` : ''}
         ${list.length ? `
           <div class="seg" role="tablist">
             ${[['all', 'すべて'], ['active', '進行中'], ['paused', '休止'], ['done', '完了']].map(([k, l]) => `<button class="${filter === k ? 'on' : ''}" data-filter="${k}">${l}</button>`).join('')}
@@ -352,18 +373,22 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
                 <div class="meta"><span class="dot ${esc(v.status || 'active')}"></span>${STATUS[v.status || 'active']}<span>·</span>${fmtDate(v.createdAt)}</div>
               </button>`).join('') || '<div class="empty"><p>該当なし</p></div>'}
           </div>` : `
-          <div class="empty">${EMPTY_ART}<p>思いついたら、すぐ。</p></div>`}
+          ${drafts.length ? '' : `<div class="empty">${EMPTY_ART}<p>思いついたら、すぐ。</p></div>`}`}
       </main>
       <button class="fab" data-go="new" aria-label="新しいビジョン">${icon('plus')}</button>`;
-    $$('.flip', app).forEach((s) => (s.style.transform = 'rotate(180deg)'));
     $$('[data-go]', app).forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
     $$('[data-filter]', app).forEach((b) => b.addEventListener('click', () => { filter = b.dataset.filter; viewHome(); }));
     $$('.card', app).forEach((b) => b.addEventListener('click', () => go('v/' + b.dataset.id)));
   }
 
   /* ================= new vision (interview) ================= */
-  function viewNew() {
-    let draft = store.draft() || { id: uid(), createdAt: Date.now(), msgs: [{ role: 'ai', text: OPENING }] };
+  function viewNew(id) {
+    const draft = (id && store.getDraft(id)) || { id: uid(), createdAt: Date.now(), msgs: [{ role: 'ai', text: OPENING }] };
+    // 最初の発言で保存し、URLを書きかけ用に差し替え（再読み込みしても続きから）
+    const persistDraft = () => {
+      store.saveDraft(draft);
+      if (location.hash !== '#/d/' + draft.id) history.replaceState(null, '', '#/d/' + draft.id);
+    };
     const hasKey = !!store.settings().apiKey;
 
     app.innerHTML = `
@@ -408,7 +433,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
           contents: [{ role: 'user', parts: [{ text: '（ビジョンの記録を始めます）' }] }, ...toContents(draft.msgs)]
         });
         draft.msgs.push({ role: 'ai', text: stripMd(reply) });
-        store.saveDraft(draft);
+        persistDraft();
       } catch (e) {
         toast(e.message);
       }
@@ -419,7 +444,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     };
     const comp = wireComposer(app, (text) => {
       draft.msgs.push({ role: 'me', text });
-      store.saveDraft(draft);
+      persistDraft();
       ask();
     });
     retryBtn.addEventListener('click', ask);
@@ -427,7 +452,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
 
     $('[data-act="back"]').addEventListener('click', () => go(''));
     $('[data-act="discard"]').addEventListener('click', () => {
-      if (!draft.msgs.some((m) => m.role === 'me') || confirm('この対話を破棄しますか？')) { store.clearDraft(); go(''); }
+      if (!draft.msgs.some((m) => m.role === 'me') || confirm('この対話を破棄しますか？')) { store.removeDraft(draft.id); go(''); }
     });
     sumBtn.addEventListener('click', async () => {
       const userText = draft.msgs.filter((m) => m.role === 'me').map((m) => m.text);
@@ -514,11 +539,11 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         </div>
       </main>`;
     $$('textarea', app).forEach(autosize);
-    $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', () => viewNew()));
+    $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', () => viewNew(v.id)));
     $('[data-act="save"]', app).addEventListener('click', () => {
       readForm($('#f'), v);
       if (store.put(v)) {
-        store.clearDraft();
+        store.removeDraft(v.id);
         toast('ビジョンを記録しました');
         go('v/' + v.id);
       }
@@ -797,7 +822,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     $('[data-act="wipe"]').addEventListener('click', () => {
       if (!confirm('すべてのビジョンを削除しますか？\n元に戻せません。')) return;
       localStorage.removeItem(KEY.visions);
-      store.clearDraft();
+      store.clearDrafts();
       toast('削除しました');
       viewSettings();
     });
