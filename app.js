@@ -248,6 +248,28 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     };
   }
 
+  /* ================= viewport (キーボード対応) ================= */
+  // iOSではキーボード表示時にレイアウトが縮まないため、visualViewportに合わせる
+  let maxVH = 0;
+  const onViewportChange = [];
+  function syncViewport() {
+    const vv = window.visualViewport;
+    const h = vv ? vv.height : window.innerHeight;
+    const t = vv ? vv.offsetTop : 0;
+    maxVH = Math.max(maxVH, h);
+    const rs = document.documentElement.style;
+    rs.setProperty('--vvh', h + 'px');
+    rs.setProperty('--vvt', t + 'px');
+    document.body.classList.toggle('kb', h < maxVH * 0.8);
+    onViewportChange.forEach((f) => f());
+  }
+  if (window.visualViewport) {
+    visualViewport.addEventListener('resize', syncViewport);
+    visualViewport.addEventListener('scroll', syncViewport);
+  }
+  window.addEventListener('orientationchange', () => { maxVH = 0; setTimeout(syncViewport, 300); });
+  syncViewport();
+
   /* ================= router ================= */
   const app = $('#app');
   let cleanup = null;
@@ -255,6 +277,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   function route() {
     if (cleanup) { cleanup(); cleanup = null; }
     closeSheet();
+    app.classList.remove('chat-mode');
     const h = location.hash.replace(/^#\/?/, '');
     const [name, id] = h.split('/');
     window.scrollTo(0, 0);
@@ -317,13 +340,18 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       <div class="chat" id="chat"></div>
       ${composerHtml(`<button class="pill primary" data-act="summarize" disabled>${icon('spark')}まとめる</button>`)}`;
 
+    app.classList.add('chat-mode');
     const chat = $('#chat');
     const sumBtn = $('[data-act="summarize"]');
     const render = () => {
       chat.innerHTML = draft.msgs.map(msgHtml).join('');
       sumBtn.disabled = !draft.msgs.some((m) => m.role === 'me');
     };
-    const scrollEnd = () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    const scrollEnd = () => chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+    // キーボード開閉時も最新の質問が見えるように
+    const keepEnd = () => { chat.scrollTop = chat.scrollHeight; };
+    onViewportChange.push(keepEnd);
+    cleanup = () => { onViewportChange.splice(onViewportChange.indexOf(keepEnd), 1); };
     render();
     scrollEnd();
 
@@ -420,6 +448,8 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   }
 
   function viewPreview(v) {
+    if (cleanup) { cleanup(); cleanup = null; }
+    app.classList.remove('chat-mode');
     window.scrollTo(0, 0);
     app.innerHTML = `
       <header class="bar">
@@ -555,6 +585,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   let sheetEls = null;
   function closeSheet() {
     if (!sheetEls) return;
+    onViewportChange.length = 0;
     sheetEls.forEach((e) => e.remove());
     sheetEls = null;
     document.body.style.overflow = '';
@@ -574,8 +605,8 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       <div class="scroll">
         ${v.core ? `<div class="anchor"><b>${fmtDate(v.createdAt)} の核心</b>${esc(v.core)}</div>` : ''}
         <div class="chat"></div>
-        ${composerHtml('', '今の迷い')}
-      </div>`;
+      </div>
+      ${composerHtml('', '今の迷い')}`;
     document.body.append(bg, sh);
     document.body.style.overflow = 'hidden';
     sheetEls = [bg, sh];
@@ -586,6 +617,8 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
 
     const chat = $('.chat', sh);
     const scroller = $('.scroll', sh);
+    const keepEnd = () => { if (sheetEls) scroller.scrollTop = scroller.scrollHeight; };
+    onViewportChange.push(keepEnd);
     const render = () => {
       chat.innerHTML = msgs.map((m, i) => msgHtml(m) + (m.role === 'ai' && i > 0 ? `<button class="save-note" data-i="${i}">${icon('plus')}記録に残す</button>` : '')).join('');
       $$('.save-note', chat).forEach((b) => b.addEventListener('click', () => {

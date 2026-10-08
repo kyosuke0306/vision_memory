@@ -119,6 +119,15 @@ main { flex: 1; padding: 4px 20px 120px; }
 .fab svg.i { width: 24px; height: 24px; stroke-width: 1.8; }
 
 /* ---------- chat ---------- */
+/* 対話画面: 表示領域(キーボードを除く)に固定し、会話だけをスクロール */
+#app.chat-mode {
+  position: fixed; left: 0; right: 0; top: var(--vvt, 0px);
+  height: var(--vvh, 100dvh); min-height: 0; overflow: hidden;
+}
+#app.chat-mode .chat { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+#app.chat-mode .composer { position: static; flex: none; }
+body.kb .composer { padding-bottom: 10px; }
+body.kb #version { display: none; }
 .chat { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 8px 20px 24px; }
 .msg { max-width: 86%; white-space: pre-wrap; word-break: break-word; animation: rise .25s ease; }
 .msg.ai { align-self: flex-start; font-size: 15.5px; }
@@ -152,7 +161,7 @@ main { flex: 1; padding: 4px 20px 120px; }
   box-shadow: var(--shadow); border: 1px solid var(--line);
 }
 .inputbox textarea {
-  flex: 1; border: 0; outline: 0; resize: none; background: transparent;
+  flex: 1; min-width: 0; font-size: 16px; border: 0; outline: 0; resize: none; background: transparent;
   padding: 8px 0; max-height: 160px; min-height: 24px; line-height: 1.6;
 }
 .inputbox .icon-btn { width: 38px; height: 38px; border-radius: 50%; }
@@ -217,7 +226,7 @@ details.log .msg { font-size: 13.5px; }
 .field > span { display: flex; align-items: center; gap: 6px; font-size: 12px; letter-spacing: .1em; color: var(--muted); margin-bottom: 6px; }
 .field > span svg.i { width: 15px; height: 15px; color: var(--accent); }
 .input, textarea.input {
-  width: 100%; border: 1px solid var(--line); background: var(--surface);
+  width: 100%; font-size: 16px; border: 1px solid var(--line); background: var(--surface);
   border-radius: 12px; padding: 11px 14px; outline: 0; resize: vertical;
   transition: border-color .15s;
 }
@@ -250,13 +259,16 @@ textarea.input { min-height: 72px; line-height: 1.7; }
 /* ---------- sheet (立ち返る) ---------- */
 .sheet-bg { position: fixed; inset: 0; z-index: 50; background: rgba(10, 10, 12, .35); animation: fade .2s; }
 .sheet {
-  position: fixed; z-index: 51; left: 0; right: 0; bottom: 0;
-  max-width: 640px; margin: 0 auto; height: 88vh; height: 88dvh;
+  position: fixed; z-index: 51; left: 0; right: 0;
+  top: calc(var(--vvt, 0px) + var(--vvh, 100dvh) * .12); height: calc(var(--vvh, 100dvh) * .88);
+  max-width: 640px; margin: 0 auto;
   background: var(--bg); border-radius: 22px 22px 0 0;
   display: flex; flex-direction: column; animation: up .28s cubic-bezier(.2, .8, .2, 1);
 }
 .sheet .bar { border-radius: 22px 22px 0 0; background: transparent; padding-top: 12px; }
-.sheet .scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+body.kb .sheet { top: var(--vvt, 0px); height: var(--vvh, 100dvh); border-radius: 0; }
+.sheet .composer { position: static; }
+.sheet .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
 .sheet .anchor { margin: 0 20px 6px; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); font-size: 13.5px; }
 .sheet .anchor b { display: block; font-size: 11px; letter-spacing: .12em; color: var(--muted); font-weight: 500; }
 .save-note { align-self: flex-start; margin-top: -6px; font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
