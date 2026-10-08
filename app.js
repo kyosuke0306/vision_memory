@@ -32,10 +32,16 @@
     cloudOff: '<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 1.6A3.3 3.3 0 0 0 7 18.5z"/><path d="M4 4l16 16"/>',
     folder: '<path d="M3.5 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
     logout: '<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14M10 16l-4-4 4-4M6 12h10"/>',
+    wall: '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3 9.7h18M3 14.3h18M9 5v4.7M15 5v4.7M6 9.7v4.6M12 9.7v4.6M18 9.7v4.6M9 14.3V19M15 14.3V19"/>',
+    question: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.4M12 16.8v.2"/>',
+    scale: '<path d="M12 4v16M7 20h10M5 7h14M5 7l-2.5 6a2.5 2.5 0 0 0 5 0zM19 7l-2.5 6a2.5 2.5 0 0 0 5 0z"/>',
+    heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+    swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
     resume: '<path d="M4 20h4L19 9l-4-4L4 16z"/>'
   };
   const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
   const LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="10.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16" cy="16" r="3.2" fill="var(--accent)"/></svg>';
+  const WALL_LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke-linecap="round"><rect x="5.5" y="7.5" width="21" height="17" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 13.2h21M5.5 18.8h21M12.5 7.5v5.7M19.5 7.5v5.7M16 13.2v5.6M12.5 18.8v5.7M19.5 18.8v5.7" stroke="var(--accent)" stroke-width="1.6"/></svg>';
   const EMPTY_ART = `<svg class="art" viewBox="0 0 140 140" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
     <path d="M20 98h100" opacity=".5"/><path d="M38 106h64" opacity=".3"/>
     <path d="M44 98a26 26 0 0 1 52 0" stroke="var(--accent)" stroke-width="1.6"/>
@@ -92,7 +98,7 @@
   }
 
   /* ================= storage (localStorage) ================= */
-  const KEY = { visions: 'vm.visions', drafts: 'vm.drafts', oldDraft: 'vm.draft', settings: 'vm.settings' };
+  const KEY = { visions: 'vm.visions', walls: 'vm.walls', drafts: 'vm.drafts', oldDraft: 'vm.draft', settings: 'vm.settings', page: 'vm.page' };
   const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } };
   const save = (k, v) => {
     try { localStorage.setItem(k, JSON.stringify(v)); return true; }
@@ -113,6 +119,22 @@
     remove(id) {
       cloudDelete('visions', id);
       return save(KEY.visions, store.all().filter((v) => v.id !== id));
+    },
+    // WALL（プロジェクトで出てきた壁）。visionId でビジョンと対応づける
+    walls: () => load(KEY.walls, []),
+    getWall: (id) => store.walls().find((w) => w.id === id),
+    wallsOf: (visionId) => store.walls().filter((w) => w.visionId === visionId),
+    putWall(w) {
+      const list = store.walls();
+      const i = list.findIndex((x) => x.id === w.id);
+      w.updatedAt = Date.now();
+      if (i >= 0) list[i] = w; else list.unshift(w);
+      cloudWrite('walls', w);
+      return save(KEY.walls, list);
+    },
+    removeWall(id) {
+      cloudDelete('walls', id);
+      return save(KEY.walls, store.walls().filter((w) => w.id !== id));
     },
     settings: () => ({ apiKey: '', model: 'gemini-flash-latest', ...load(KEY.settings, {}) }),
     saveSettings(st) {
@@ -135,7 +157,9 @@
     wipe() {
       store.all().forEach((v) => cloudDelete('visions', v.id));
       store.drafts().forEach((d) => cloudDelete('drafts', d.id));
+      store.walls().forEach((w) => cloudDelete('walls', w.id));
       localStorage.removeItem(KEY.visions);
+      localStorage.removeItem(KEY.walls);
       localStorage.removeItem(KEY.drafts);
     }
   };
@@ -173,7 +197,7 @@
     if (!user) return;
     const { fs, db } = cloud.api;
     try {
-      for (const kind of ['visions', 'drafts']) {
+      for (const kind of ['visions', 'walls', 'drafts']) {
         const col = fs.collection(db, ROOT, user.uid, kind);
         const remote = new Map((await fs.getDocs(col)).docs.map((d) => [d.id, d.data()]));
         // この端末にしかないもの・こちらが新しいものをアップロード
@@ -183,7 +207,7 @@
           .map((it) => fs.setDoc(fs.doc(col, it.id), plain(it))));
         unsubs.push(fs.onSnapshot(col, (snap) => {
           const items = snap.docs.map((d) => d.data()).filter((x) => !x.deleted);
-          if (kind === 'visions') items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          if (kind !== 'drafts') items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
           save(KEY[kind], items);
           cloud.state = 'synced';
           scheduleRefresh();
@@ -227,7 +251,7 @@
     else if (h.startsWith('v/') && !sheetEls && $('.v-title')) {
       if (cleanup) { cleanup(); cleanup = null; }
       viewVision(h.split('/')[1]);
-    }
+    } else if (h.startsWith('w/') && !sheetEls && $('.v-title')) viewWall(h.split('/')[1]);
   }
 
   // ブラウザによる自動削除を防ぐ
@@ -309,38 +333,40 @@
     ['essentials', '絶対に妥協したくないこと', true],
     ['inspiration', '思いついたきっかけ', false]
   ];
-  const REQUIRED = ASPECTS.filter((a) => a[2]).map((a) => a[0]);
   const MAX_TURNS = 12; // これ以上は聞かずに記録へ
 
-  const SYS_INTERVIEW = `あなたは、ユーザーが「思いついた瞬間のビジョン」を言葉にするのを手伝う聞き手です。
-ユーザーは何かを作る・始めることを思いついたばかりで、熱量はあるが、うまく説明できていません。
-目的は、後でプロジェクトに迷った時に原点へ立ち返れる記録を作ることです。そのために次の情報を集めます。
-
-${ASPECTS.map(([k, l, r]) => `- ${k}: ${l}${r ? '' : '（任意。会話の中で自然に出なければ聞かなくてよい）'}`).join('\n')}
+  // 聞き取りの共通ルール（VISION / WALL）
+  const interviewRules = (aspects) => `
+${aspects.map(([k, l, r]) => `- ${k}: ${l}${r ? '' : '（任意。会話の中で自然に出なければ聞かなくてよい）'}`).join('\n')}
 
 毎回のやり方:
 1. これまでの会話全体を読み、各項目が十分に語られたかを判定して covered に入れる。1つの答えで複数の項目が埋まることもある。
 2. ユーザーがすでに話した内容は、二度と質問しない。
-3. 「十分」とは、後で本人が読んで当時の気持ちを思い出せる程度に具体的なこと。「楽しそう」「便利」のように抽象的なだけなら、具体的な場面や感覚を尋ねて深掘りする（同じ項目の深掘りは1回まで）。
+3. 「十分」とは、後で本人が読んで当時の気持ちを思い出せる程度に具体的なこと。抽象的なだけなら、具体的な場面や感覚を尋ねて深掘りする（同じ項目の深掘りは1回まで）。
 4. ユーザーが「特にない」「わからない」と答えた項目は、聞き直さず埋まったとみなす。
 5. まだ埋まっていない項目のうち、会話の流れで最も自然なものを1つだけ質問する。
-6. 必須項目（任意以外）がすべて埋まった時、またはユーザーが終えたい様子の時は done を true にする。その時の reply は質問せず、30字以内の短い締めの言葉にする。
+6. 必須項目（任意以外）がすべて埋まった時、またはユーザーが終えたい様子の時は done を true にする。その時の reply は質問せず、30字以内の短い締めの言葉にする。`;
+
+  const SYS_INTERVIEW = `あなたは、ユーザーが「思いついた瞬間のビジョン」を言葉にするのを手伝う聞き手です。
+ユーザーは何かを作る・始めることを思いついたばかりで、熱量はあるが、うまく説明できていません。
+目的は、後でプロジェクトに迷った時に原点へ立ち返れる記録を作ることです。そのために次の情報を集めます。
+${interviewRules(ASPECTS)}
 
 reply の書き方:
 - 相手の言葉を20字以内で受け止める一文 + 60字以内の質問1つ。
 - 技術的な実現性・コスト・難しさの話はしない。否定・評価・助言はしない。熱量を引き出す。
 - マークダウン・絵文字・箇条書きは使わない。日本語の自然な話し言葉で。`;
 
-  const INTERVIEW_SCHEMA = {
+  const interviewSchema = (aspects) => ({
     type: 'OBJECT',
     properties: {
-      covered: { type: 'OBJECT', properties: Object.fromEntries(ASPECTS.map(([k]) => [k, { type: 'BOOLEAN' }])), required: ASPECTS.map(([k]) => k) },
+      covered: { type: 'OBJECT', properties: Object.fromEntries(aspects.map(([k]) => [k, { type: 'BOOLEAN' }])), required: aspects.map(([k]) => k) },
       done: { type: 'BOOLEAN' },
       reply: { type: 'STRING' }
     },
     required: ['covered', 'done', 'reply'],
     propertyOrdering: ['covered', 'done', 'reply']
-  };
+  });
 
   const sysSummary = (cats) => `あなたはユーザーとの対話から「ビジョン」を記録としてまとめる編集者です。
 目的: 数ヶ月後、技術的な問題や妥協で迷ったユーザーが、これを読んで最初の熱量と目的を思い出せること。
@@ -372,23 +398,92 @@ reply の書き方:
     propertyOrdering: ['title', 'category', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords']
   };
 
-  const sysReturn = (v) => `あなたは、プロジェクトの途中で迷っているユーザーを「原点」に立ち返らせる相談相手です。
-以下は、ユーザーがこのプロジェクトを思いついた瞬間に記録したビジョンです（${fmtDate(v.createdAt)} 記録）。
-
-タイトル: ${v.title}
-核心: ${v.core}
+  const visionText = (v) => `タイトル: ${v.title}
+VISION（核心）: ${v.core}
 なぜ: ${v.why}
 ワクワク: ${v.excitement}
 描く未来: ${v.future}
 きっかけ: ${v.inspiration}
-譲れないこと: ${(v.essentials || []).join(' / ')}
+譲れないこと: ${(v.essentials || []).join(' / ')}`;
+
+  const wallText = (w) => `壁: ${w.wall}
+状況: ${w.situation}
+原因: ${w.cause}
+ビジョンとの関係: ${w.relation}
+妥協しそうなこと: ${w.compromise}
+今の気持ち: ${w.feeling}
+試したこと: ${w.tried}`;
+
+  const sysReturn = (v, w) => `あなたは、プロジェクトの途中で迷っているユーザーを「原点」に立ち返らせる相談相手です。
+以下は、ユーザーがこのプロジェクトを思いついた瞬間に記録したビジョンです（${fmtDate(v.createdAt)} 記録）。
+
+${visionText(v)}
 ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n) => `${fmtDate(n.at)} ${n.text}`).join('\n') : ''}
+${w ? `\n今ぶつかっている壁（${fmtDate(w.createdAt)} 記録）:\n${wallText(w)}\n${(w.notes || []).length ? 'その後の記録:\n' + w.notes.slice(-10).map((n) => `${fmtDate(n.at)} ${n.text}`).join('\n') : ''}` : ''}
 
 ルール:
 - ユーザーの悩みを、当時のビジョンの言葉と照らし合わせる。ビジョンの言葉を「」で短く引用する。
 - 妥協しようとしている点が「譲れないこと」に触れるなら、はっきり指摘する。触れないなら、柔軟にしてよいと伝える。
 - 答えを押し付けず、判断の軸を示し、最後に問いを1つ返す。
 - 200字以内。マークダウン・絵文字・箇条書きは使わない。`;
+
+  /* ================= WALL（壁）の聞き取り ================= */
+  const WALL_OPENING = 'どんな壁にぶつかっていますか。\n思うままに書いてください。';
+  const WALL_ASPECTS = [
+    ['what', '何が起きているのか（壁の具体的な中身）', true],
+    ['cause', 'なぜそれが壁になっているのか（技術・人・時間・お金・気持ちなど）', true],
+    ['impact', 'ビジョンのどこに関わるのか（どの想いや譲れないことにぶつかっているか）', true],
+    ['compromise', '今考えている妥協や選択肢', true],
+    ['feeling', '今どう感じているか', true],
+    ['tried', 'すでに試したこと', false]
+  ];
+  // ビジョンの項目（WALLとの対応づけに使う）
+  const VTARGETS = { core: 'VISION', why: 'なぜやりたいのか', excitement: 'ワクワクすること', future: '思い描く未来', essentials: '譲れないこと', inspiration: 'きっかけ' };
+
+  const sysWallInterview = (v) => `あなたは、プロジェクトの途中で「壁」にぶつかったユーザーの話を聞き、記録を手伝う聞き手です。
+ユーザーは以前、このプロジェクトについて次のビジョンを刻みました（${fmtDate(v.createdAt)}）。
+
+${visionText(v)}
+
+目的は、ビジョンと今の壁を並べて見られる記録を作り、ユーザーが原点を忘れずに判断できるようにすることです。そのために次の情報を集めます。
+${interviewRules(WALL_ASPECTS)}
+
+reply の書き方:
+- 相手の言葉を20字以内で受け止める一文 + 60字以内の質問1つ。
+- 解決策・助言・評価はしない。責めない。壁の正体と、ビジョンとの関係をはっきりさせることに集中する。
+- impact を聞く時は、ビジョンの言葉を「」で短く引用して、どこに関わるかを尋ねてよい。
+- マークダウン・絵文字・箇条書きは使わない。日本語の自然な話し言葉で。`;
+
+  const sysWallSummary = (v) => `あなたはユーザーとの対話から「壁（プロジェクトの障害）」の記録をまとめる編集者です。
+ユーザーのビジョン:
+${visionText(v)}
+
+目的: ビジョンと並べて見た時に、何が起きていて、ビジョンのどこにぶつかっているのかが一目でわかること。
+ルール:
+- ユーザー自身の言葉をできるだけそのまま残す。誇張しない。対話で語られていないことは書かない（不明は空文字）。
+- 一人称（ユーザー視点）で書く。マークダウン・絵文字は使わない。
+- title: 20字以内の名前。
+- wall: 壁を1文で（60字以内）。
+- situation（状況）/ cause（原因）/ compromise（妥協しそうなこと・迷っている選択肢）/ feeling（今の気持ち）/ tried（試したこと）: 各120字以内。
+- targets: この壁が関わるビジョンの項目を ${Object.keys(VTARGETS).join(', ')} から1〜3個。
+- relation: ビジョンのどこと、どうぶつかっているかを1文で（60字以内）。ビジョンの言葉を「」で引用してよい。`;
+
+  const WALL_SUMMARY_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      title: { type: 'STRING' },
+      wall: { type: 'STRING' },
+      relation: { type: 'STRING' },
+      targets: { type: 'ARRAY', items: { type: 'STRING', enum: Object.keys(VTARGETS) } },
+      situation: { type: 'STRING' },
+      cause: { type: 'STRING' },
+      compromise: { type: 'STRING' },
+      feeling: { type: 'STRING' },
+      tried: { type: 'STRING' }
+    },
+    required: ['title', 'wall', 'relation', 'targets', 'situation', 'cause', 'compromise', 'feeling', 'tried'],
+    propertyOrdering: ['title', 'wall', 'relation', 'targets', 'situation', 'cause', 'compromise', 'feeling', 'tried']
+  };
 
   /* ================= speech input ================= */
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -481,6 +576,10 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   // 画面を表示領域に固定するモード（chat-mode: 対話 / fit-mode: 詳細）
   const setMode = (m) => { app.classList.remove('chat-mode', 'fit-mode'); if (m) app.classList.add(m); };
 
+  // VISION（琥珀色）/ WALL（青灰色）のテーマ
+  const setTheme = (t) => document.body.classList.toggle('wall', t === 'wall');
+  let page = load(KEY.page, 'vision');
+
   /* ================= router ================= */
   const app = $('#app');
   let cleanup = null;
@@ -492,9 +591,12 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     const h = location.hash.replace(/^#\/?/, '');
     const [name, id] = h.split('/');
     window.scrollTo(0, 0);
+    setTheme(name === 'w' || name === 'wn' || (!name && page === 'wall') ? 'wall' : 'vision');
     if (name === 'new') viewNew();
+    else if (name === 'wn' && id) viewNew(null, { kind: 'wall', visionId: id });
     else if (name === 'd' && id) viewNew(id);
     else if (name === 'v' && id) viewVision(id);
+    else if (name === 'w' && id) viewWall(id);
     else if (name === 'settings') viewSettings();
     else viewHome();
   }
@@ -518,33 +620,52 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     </button>`;
   }
 
+  // ロゴをタップで VISION / WALL を切り替え
+  function brandHtml() {
+    return `<button class="brand switch" data-act="switch" aria-label="VISIONとWALLを切り替え">
+      ${page === 'wall' ? WALL_LOGO : LOGO}
+      <span class="${page === 'vision' ? 'on' : ''}">VISION</span><span class="${page === 'wall' ? 'on' : ''}">WALL</span>
+    </button>`;
+  }
+  function wireBrand() {
+    $('[data-act="switch"]', app).addEventListener('click', () => {
+      page = page === 'wall' ? 'vision' : 'wall';
+      save(KEY.page, page);
+      setTheme(page);
+      viewHome();
+    });
+  }
+  const userDrafts = (kind) => store.drafts().filter((d) => (d.kind || 'vision') === kind && d.msgs?.some((m) => m.role === 'me'));
+  const headerExtras = () => (cloud.enabled
+    ? `<button class="icon-btn sync ${cloud.user ? 'on' : ''}" data-go="settings" aria-label="同期">${icon(cloud.user ? 'cloud' : 'cloudOff')}</button>` : '')
+    + `<button class="icon-btn" data-go="settings" aria-label="設定">${icon('sliders')}</button>`;
+  const draftsHtml = (drafts) => (drafts.length ? `
+    <div class="drafts">
+      <div class="drafts-head">書きかけ</div>
+      ${drafts.map((d) => `
+        <button class="draft" data-go="d/${esc(d.id)}">${icon('resume')}
+          <span>${esc(d.msgs.find((m) => m.role === 'me').text)}</span>
+          <time>${fmtDate(d.updatedAt || d.createdAt)}</time>
+        </button>`).join('')}
+    </div>` : '');
+
   function viewHome() {
+    setTheme(page);
+    if (page === 'wall') return viewWallHome();
     const list = store.all();
-    const drafts = store.drafts().filter((d) => d.msgs?.some((m) => m.role === 'me'));
+    const drafts = userDrafts('vision');
     // カテゴリごとにまとめる（最近のビジョンがあるカテゴリが上、完了は各カテゴリの下）
     const groups = new Map();
     list.forEach((v) => { const c = catOf(v); if (!groups.has(c)) groups.set(c, []); groups.get(c).push(v); });
     groups.forEach((g) => g.sort((a, b) => (a.status === 'done') - (b.status === 'done')));
     if (catFilter !== 'all' && !groups.has(catFilter)) catFilter = 'all';
-    const syncIcon = cloud.enabled
-      ? `<button class="icon-btn sync ${cloud.user ? 'on' : ''}" data-go="settings" aria-label="同期">${icon(cloud.user ? 'cloud' : 'cloudOff')}</button>` : '';
-
     app.innerHTML = `
       <header class="bar">
-        <div class="brand">${LOGO}<span>VISION</span></div>
-        ${syncIcon}
-        <button class="icon-btn" data-go="settings" aria-label="設定">${icon('sliders')}</button>
+        ${brandHtml()}
+        ${headerExtras()}
       </header>
       <main class="view-enter">
-        ${drafts.length ? `
-          <div class="drafts">
-            <div class="drafts-head">書きかけ</div>
-            ${drafts.map((d) => `
-              <button class="draft" data-go="d/${esc(d.id)}">${icon('resume')}
-                <span>${esc(d.msgs.find((m) => m.role === 'me').text)}</span>
-                <time>${fmtDate(d.updatedAt || d.createdAt)}</time>
-              </button>`).join('')}
-          </div>` : ''}
+        ${draftsHtml(drafts)}
         ${list.length ? `
           <div class="cats" role="tablist">
             <button class="${catFilter === 'all' ? 'on' : ''}" data-cat="all">すべて</button>
@@ -560,14 +681,56 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
           ${drafts.length ? '' : `<div class="empty">${EMPTY_ART}<p>思いついたら、すぐ。</p></div>`}`}
       </main>
       <button class="fab" data-go="new" aria-label="新しいビジョン">${icon('plus')}</button>`;
+    wireBrand();
     $$('[data-go]', app).forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
     $$('[data-cat]', app).forEach((b) => b.addEventListener('click', () => { catFilter = b.dataset.cat; viewHome(); }));
     $$('.card', app).forEach((b) => b.addEventListener('click', () => go('v/' + b.dataset.id)));
   }
 
   /* ================= new vision (interview) ================= */
-  function viewNew(id) {
-    const draft = (id && store.getDraft(id)) || { id: uid(), createdAt: Date.now(), msgs: [{ role: 'ai', text: OPENING }] };
+  // 聞き取りの種類ごとの設定
+  const KINDS = {
+    vision: {
+      title: () => '新しいビジョン',
+      aspects: ASPECTS,
+      sys: () => SYS_INTERVIEW,
+      recording: 'ビジョンを言葉にしています',
+      async record(draft) {
+        const raw = await gemini({
+          system: sysSummary(categories()),
+          contents: [...toContents([{ role: 'me', text: '（ビジョンの記録を始めます）' }, ...draft.msgs]), { role: 'user', parts: [{ text: 'ここまでの対話をビジョンとしてまとめてください。' }] }],
+          schema: SUMMARY_SCHEMA,
+          temperature: 0.4
+        });
+        viewPreview({ id: draft.id, createdAt: draft.createdAt, status: 'active', transcript: draft.msgs, notes: [], ...sanitize(JSON.parse(raw)) });
+      }
+    },
+    wall: {
+      title: (d) => `${store.get(d.visionId)?.title || ''} の壁`,
+      aspects: WALL_ASPECTS,
+      sys: (d) => sysWallInterview(store.get(d.visionId) || {}),
+      recording: '壁を言葉にしています',
+      async record(draft) {
+        const v = store.get(draft.visionId) || {};
+        const raw = await gemini({
+          system: sysWallSummary(v),
+          contents: [...toContents([{ role: 'me', text: '（壁の記録を始めます）' }, ...draft.msgs]), { role: 'user', parts: [{ text: 'ここまでの対話を壁の記録としてまとめてください。' }] }],
+          schema: WALL_SUMMARY_SCHEMA,
+          temperature: 0.4
+        });
+        viewWallPreview({ id: draft.id, visionId: draft.visionId, createdAt: draft.createdAt, status: 'facing', transcript: draft.msgs, notes: [], ...sanitizeWall(JSON.parse(raw)) });
+      }
+    }
+  };
+
+  function viewNew(id, opts = {}) {
+    const draft = (id && store.getDraft(id)) || {
+      id: uid(), createdAt: Date.now(), kind: opts.kind || 'vision', visionId: opts.visionId,
+      msgs: [{ role: 'ai', text: opts.kind === 'wall' ? WALL_OPENING : OPENING }]
+    };
+    const K = KINDS[draft.kind || 'vision'];
+    const REQ = K.aspects.filter((a) => a[2]).map((a) => a[0]);
+    setTheme(draft.kind === 'wall' ? 'wall' : 'vision');
     // 最初の発言で保存し、URLを書きかけ用に差し替え（再読み込みしても続きから）
     const persistDraft = () => {
       store.saveDraft(draft);
@@ -578,10 +741,10 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     app.innerHTML = `
       <header class="bar">
         <button class="icon-btn" data-act="back" aria-label="戻る">${icon('back')}</button>
-        <div class="title">新しいビジョン</div>
+        <div class="title">${esc(K.title(draft))}</div>
         <button class="icon-btn" data-act="discard" aria-label="破棄">${icon('trash')}</button>
       </header>
-      <div class="progress" aria-label="聞き取りの進み具合">${REQUIRED.map((k) => `<i data-k="${k}"></i>`).join('')}</div>
+      <div class="progress" aria-label="聞き取りの進み具合">${REQ.map((k) => `<i data-k="${k}"></i>`).join('')}</div>
       ${hasKey ? '' : `<div class="banner">${icon('key')}<span>Geminiを使うにはAPIキーが必要です</span><a href="#/settings">設定</a></div>`}
       <div class="chat" id="chat"></div>
       ${composerHtml(`<button class="pill" data-act="next" hidden></button>`)}`;
@@ -626,14 +789,14 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       let finished = false;
       try {
         const raw = await gemini({
-          system: SYS_INTERVIEW,
-          contents: [{ role: 'user', parts: [{ text: '（ビジョンの記録を始めます）' }] }, ...toContents(draft.msgs)],
-          schema: INTERVIEW_SCHEMA
+          system: K.sys(draft),
+          contents: [{ role: 'user', parts: [{ text: '（記録を始めます）' }] }, ...toContents(draft.msgs)],
+          schema: interviewSchema(K.aspects)
         });
         const r = JSON.parse(raw);
         draft.covered = r.covered || {};
         const turns = draft.msgs.filter((m) => m.role === 'me').length;
-        finished = !!r.done || REQUIRED.every((k) => draft.covered[k]) || turns >= MAX_TURNS;
+        finished = !!r.done || REQ.every((k) => draft.covered[k]) || turns >= MAX_TURNS;
         draft.done = finished;
         draft.msgs.push({ role: 'ai', text: stripMd(r.reply) || (finished ? 'ありがとうございます。記録します。' : 'もう少し聞かせてください。') });
         persistDraft();
@@ -647,21 +810,11 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     };
 
     const record = async () => {
-      setBusy(true, 'ビジョンを言葉にしています');
+      setBusy(true, K.recording);
       failed = false;
       try {
-        const raw = await gemini({
-          system: sysSummary(categories()),
-          contents: [...toContents([{ role: 'me', text: '（ビジョンの記録を始めます）' }, ...draft.msgs]), { role: 'user', parts: [{ text: 'ここまでの対話をビジョンとしてまとめてください。' }] }],
-          schema: SUMMARY_SCHEMA,
-          temperature: 0.4
-        });
-        const v = {
-          id: draft.id, createdAt: draft.createdAt, status: 'active',
-          transcript: draft.msgs, notes: [], ...sanitize(JSON.parse(raw))
-        };
         busy = false;
-        viewPreview(v);
+        await K.record(draft);
       } catch (e) {
         toast(e.message);
         failed = true;
@@ -771,6 +924,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       ...((v.essentials || []).length ? [['譲れないこと', 'shield', `<ul>${v.essentials.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`]] : [])
     ];
     const talks = (v.transcript || []).length;
+    const walls = store.wallsOf(v.id);
 
     setMode('fit-mode');
     app.innerHTML = `
@@ -798,19 +952,27 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
           <button class="return-btn" data-act="return">${icon('compass')}原点に立ち返る</button>
           <div class="foot-row">
             <button class="foot-btn" data-act="notes">${icon('note')}<span>記録</span>${v.notes.length ? `<b>${v.notes.length}</b>` : ''}</button>
-            ${talks ? `<button class="foot-btn" data-act="log">${icon('bookmark')}<span>最初の対話</span></button>` : ''}
+            ${talks ? `<button class="foot-btn" data-act="log">${icon('bookmark')}<span>対話</span></button>` : ''}
+            <button class="foot-btn to-wall" data-act="walls">${icon('wall')}<span>WALL</span>${walls.length ? `<b>${walls.length}</b>` : ''}</button>
           </div>
         </div>
       </main>`;
 
+    const again = () => { if (location.hash.endsWith(v.id)) viewVision(v.id); };
     $('[data-act="back"]').addEventListener('click', () => go(''));
     $('[data-act="del"]').addEventListener('click', () => {
-      if (confirm('このビジョンを削除しますか？\n元に戻せません。')) { store.remove(v.id); toast('削除しました'); go(''); }
+      const msg = walls.length ? `このビジョンと、関連するWALL ${walls.length}件を削除しますか？\n元に戻せません。` : 'このビジョンを削除しますか？\n元に戻せません。';
+      if (!confirm(msg)) return;
+      walls.forEach((w) => store.removeWall(w.id));
+      store.remove(v.id);
+      toast('削除しました');
+      go('');
     });
     $('[data-act="edit"]').addEventListener('click', () => viewEdit(v));
-    $('[data-act="return"]').addEventListener('click', () => openReturn(v));
-    $('[data-act="notes"]').addEventListener('click', () => openNotes(v));
-    $('[data-act="log"]')?.addEventListener('click', () => openLog(v));
+    $('[data-act="return"]').addEventListener('click', () => openReturn(v, again));
+    $('[data-act="notes"]').addEventListener('click', () => openNotes(v, store.put, again));
+    $('[data-act="log"]')?.addEventListener('click', () => openLog(v, again));
+    $('[data-act="walls"]').addEventListener('click', () => openWalls(v, again));
     $('[data-act="status"]').addEventListener('click', () => {
       const keys = Object.keys(STATUS);
       v.status = keys[(keys.indexOf(st) + 1) % keys.length];
@@ -852,6 +1014,246 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     });
   }
 
+  /* ================= WALL ================= */
+  const WALL_STATUS = { facing: '向き合い中', hold: '保留', over: '越えた' };
+  const WFIELDS = [
+    ['situation', '状況', 'eye'],
+    ['cause', '原因', 'question'],
+    ['compromise', '妥協しそうなこと', 'scale'],
+    ['feeling', '今の気持ち', 'heart'],
+    ['tried', '試したこと', 'check']
+  ];
+
+  function sanitizeWall(o) {
+    const s = (x) => stripMd(typeof x === 'string' ? x : '');
+    const out = { title: s(o.title), wall: s(o.wall), relation: s(o.relation) };
+    out.targets = (Array.isArray(o.targets) ? o.targets : []).filter((t) => VTARGETS[t]).slice(0, 3);
+    WFIELDS.forEach(([k]) => (out[k] = s(o[k])));
+    return out;
+  }
+
+  function wallCardHtml(w) {
+    const st = w.status || 'facing';
+    return `<button class="card ${esc(st)}" data-wall="${esc(w.id)}">
+      <h3>${esc(w.title || '無題')}</h3>
+      <p>${esc(w.wall)}</p>
+      <div class="meta"><span class="dot ${esc(st)}"></span>${WALL_STATUS[st]}<span>·</span>${fmtDate(w.createdAt)}</div>
+    </button>`;
+  }
+
+  function viewWallHome() {
+    const walls = store.walls();
+    const drafts = userDrafts('wall');
+    // ビジョンごとにまとめる（最近の壁があるビジョンが上、越えた壁は下）
+    const groups = new Map();
+    walls.forEach((w) => { if (!groups.has(w.visionId)) groups.set(w.visionId, []); groups.get(w.visionId).push(w); });
+    groups.forEach((g) => g.sort((a, b) => (a.status === 'over') - (b.status === 'over')));
+    app.innerHTML = `
+      <header class="bar">
+        ${brandHtml()}
+        ${headerExtras()}
+      </header>
+      <main class="view-enter">
+        ${draftsHtml(drafts)}
+        ${walls.length ? [...groups].map(([vid, g]) => {
+          const v = store.get(vid);
+          return `
+            <section class="group">
+              <button class="group-head vision-link" ${v ? `data-go="v/${esc(vid)}"` : ''}>${icon('compass')}${esc(v ? v.title : '削除されたVISION')}</button>
+              <div class="list">${g.map(wallCardHtml).join('')}</div>
+            </section>`;
+        }).join('') : drafts.length ? '' : `
+          <div class="empty">${EMPTY_ART}<p>壁にぶつかったら、ここへ。</p></div>`}
+      </main>
+      <button class="fab" data-act="new-wall" aria-label="壁を記録する">${icon('plus')}</button>`;
+    wireBrand();
+    $$('[data-go]', app).forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
+    $$('[data-wall]', app).forEach((b) => b.addEventListener('click', () => go('w/' + b.dataset.wall)));
+    $('[data-act="new-wall"]', app).addEventListener('click', () => pickVision());
+  }
+
+  // どのVISIONの壁かを選ぶ
+  function pickVision() {
+    const list = store.all();
+    if (!list.length) { toast('先にVISIONを刻んでください'); return; }
+    const sorted = [...list].sort((a, b) => (a.status === 'done') - (b.status === 'done'));
+    const sh = openSheet(() => {}, 'どのVISIONの壁ですか', `
+      <div class="scroll"><div class="pick-list">
+        ${sorted.map((v) => `
+          <button class="pick vision-pick" data-v="${esc(v.id)}">
+            <span class="pick-cat">${esc(catOf(v))}</span>
+            <b>${esc(v.title)}</b>
+            <span class="pick-core">${esc(v.core)}</span>
+          </button>`).join('')}
+      </div></div>`);
+    $$('[data-v]', sh).forEach((b) => b.addEventListener('click', () => { closeSheet(); go('wn/' + b.dataset.v); }));
+  }
+
+  // ビジョン詳細から：このビジョンの壁一覧
+  function openWalls(v, rerender) {
+    const walls = store.wallsOf(v.id);
+    const sh = openSheet(rerender, 'WALL', `
+      <div class="scroll wall-sheet"><div class="list" style="padding:4px 20px 12px">
+        ${walls.length ? walls.map(wallCardHtml).join('') : '<p class="sheet-empty">まだ壁の記録はありません</p>'}
+      </div></div>
+      <div class="sheet-foot"><button class="return-btn wall-btn" data-act="new">${icon('wall')}壁を記録する</button></div>`);
+    sh.classList.add('wall-theme');
+    $$('[data-wall]', sh).forEach((b) => b.addEventListener('click', () => { closeSheet(); go('w/' + b.dataset.wall); }));
+    $('[data-act="new"]', sh).addEventListener('click', () => { closeSheet(); go('wn/' + v.id); });
+  }
+
+  // 壁の詳細：VISION と WALL を並べて見る
+  function viewWall(id) {
+    const w = store.getWall(id);
+    if (!w) { go(''); return; }
+    const v = store.get(w.visionId);
+    w.notes = w.notes || [];
+    const st = w.status || 'facing';
+    const targets = w.targets || [];
+    const hit = (k) => (targets.includes(k) ? ' hit' : '');
+    const items = WFIELDS.filter(([k]) => w[k]).map(([k, l, ic]) => [l, ic, `<div class="body">${esc(w[k])}</div>`]);
+    const vItem = (k) => {
+      if (k === 'essentials') return (v.essentials || []).length ? `<div class="vs-item${hit(k)}"><b>${VTARGETS[k]}</b><ul>${v.essentials.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></div>` : '';
+      return v[k] ? `<div class="vs-item${hit(k)}"><b>${VTARGETS[k]}</b>${esc(v[k])}</div>` : '';
+    };
+    const talks = (w.transcript || []).length;
+
+    setTheme('wall');
+    setMode('fit-mode');
+    app.innerHTML = `
+      <header class="bar">
+        <button class="icon-btn" data-act="back" aria-label="戻る">${icon('back')}</button>
+        <div class="title"></div>
+        <button class="icon-btn" data-act="edit" aria-label="編集">${icon('pencil')}</button>
+        <button class="icon-btn danger" data-act="del" aria-label="削除">${icon('trash')}</button>
+      </header>
+      <main class="detail view-enter">
+        <div class="since">
+          <span class="cat">WALL</span><span>·</span>${fmtDate(w.createdAt)}
+          <button class="st-pill" data-act="status" aria-label="状態を切り替え"><span class="dot ${st}"></span>${WALL_STATUS[st]}</button>
+        </div>
+        <h1 class="v-title">${esc(w.title)}</h1>
+        <div class="mid">
+          ${v ? `
+            <section class="vs vs-vision" data-act="open-vision">
+              <div class="vs-label">${icon('compass')}VISION<span>${esc(v.title)}</span></div>
+              <p class="vs-core${hit('core')}">${esc(v.core)}</p>
+              ${vItem('why')}
+              ${['excitement', 'future', 'essentials', 'inspiration'].filter((k) => targets.includes(k)).map(vItem).join('')}
+            </section>` : '<p class="hint">元のVISIONは削除されています</p>'}
+          ${w.relation ? `<div class="vs-link">${icon('bolt')}<span>${esc(w.relation)}</span></div>` : '<div class="vs-gap"></div>'}
+          <section class="vs vs-wall">
+            <div class="vs-label">${icon('wall')}WALL</div>
+            <p class="vs-core">${esc(w.wall)}</p>
+          </section>
+          <div class="acc">
+            ${items.map(([l, ic, body]) => `
+              <div class="acc-item">
+                <button class="acc-head">${icon(ic)}<span>${l}</span>${icon('chevron', 'chev')}</button>
+                <div class="acc-body">${body}</div>
+              </div>`).join('')}
+          </div>
+        </div>
+        <div class="detail-foot">
+          ${v ? `<button class="return-btn" data-act="return">${icon('compass')}原点に立ち返る</button>` : ''}
+          <div class="foot-row">
+            <button class="foot-btn" data-act="notes">${icon('note')}<span>記録</span>${w.notes.length ? `<b>${w.notes.length}</b>` : ''}</button>
+            ${talks ? `<button class="foot-btn" data-act="log">${icon('bookmark')}<span>対話</span></button>` : ''}
+          </div>
+        </div>
+      </main>`;
+
+    const again = () => { if (location.hash.endsWith(w.id)) viewWall(w.id); };
+    $('[data-act="back"]').addEventListener('click', () => go(''));
+    $('[data-act="del"]').addEventListener('click', () => {
+      if (confirm('この壁の記録を削除しますか？\n元に戻せません。')) { store.removeWall(w.id); toast('削除しました'); go(''); }
+    });
+    $('[data-act="edit"]').addEventListener('click', () => viewWallEdit(w));
+    $('[data-act="open-vision"]')?.addEventListener('click', () => go('v/' + v.id));
+    $('[data-act="return"]')?.addEventListener('click', () => openReturn(v, again, w));
+    $('[data-act="notes"]').addEventListener('click', () => openNotes(w, store.putWall, again));
+    $('[data-act="log"]')?.addEventListener('click', () => openLog(w, again));
+    $('[data-act="status"]').addEventListener('click', () => {
+      const keys = Object.keys(WALL_STATUS);
+      w.status = keys[(keys.indexOf(st) + 1) % keys.length];
+      store.putWall(w);
+      viewWall(w.id);
+      toast(`${WALL_STATUS[w.status]}にしました`);
+    });
+    $$('.acc-item').forEach((it) => $('.acc-head', it).addEventListener('click', () => {
+      const open = !it.classList.contains('open');
+      $$('.acc-item').forEach((x) => x.classList.remove('open'));
+      it.classList.toggle('open', open);
+    }));
+  }
+
+  function wallFormHtml(w) {
+    return `
+      <label class="field"><span>タイトル</span><input class="input" name="title" value="${esc(w.title)}"></label>
+      <label class="field"><span>${icon('wall')}WALL</span><textarea class="input" name="wall" rows="2">${esc(w.wall)}</textarea></label>
+      <div class="field"><label><span>${icon('bolt')}ビジョンとの関係</span><textarea class="input" name="relation" rows="2">${esc(w.relation)}</textarea></label>
+        <div class="cat-pick">${Object.entries(VTARGETS).map(([k, l]) => `<button type="button" class="${(w.targets || []).includes(k) ? 'on' : ''}" data-target="${k}">${l}</button>`).join('')}</div>
+      </div>
+      ${WFIELDS.map(([k, l, ic]) => `<label class="field"><span>${icon(ic)}${l}</span><textarea class="input" name="${k}" rows="3">${esc(w[k])}</textarea></label>`).join('')}`;
+  }
+  function wireWallForm(root) {
+    $$('textarea', root).forEach(autosize);
+    $$('[data-target]', root).forEach((b) => b.addEventListener('click', () => b.classList.toggle('on')));
+  }
+  function readWallForm(root, w) {
+    const val = (n) => $(`[name="${n}"]`, root).value.trim();
+    w.title = val('title') || '無題';
+    w.wall = val('wall');
+    w.relation = val('relation');
+    w.targets = $$('[data-target].on', root).map((b) => b.dataset.target);
+    WFIELDS.forEach(([k]) => (w[k] = val(k)));
+    return w;
+  }
+
+  function wallFormView(w, { title, head, saveLabel, onBack, onSave }) {
+    if (cleanup) { cleanup(); cleanup = null; }
+    setTheme('wall');
+    setMode();
+    window.scrollTo(0, 0);
+    app.innerHTML = `
+      <header class="bar">
+        <button class="icon-btn" data-act="back" aria-label="戻る">${icon('back')}</button>
+        <div class="title">${title}</div>
+      </header>
+      <main class="view-enter" style="padding-bottom:0">
+        ${head ? `<div class="preview-head">${icon('spark')}${head}</div>` : ''}
+        <form id="f">${wallFormHtml(w)}</form>
+        <div class="sticky-actions">
+          <button class="btn" data-act="back">戻る</button>
+          <button class="btn primary" data-act="save">${icon('check')}${saveLabel}</button>
+        </div>
+      </main>`;
+    wireWallForm(app);
+    $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', onBack));
+    $('[data-act="save"]', app).addEventListener('click', () => { readWallForm($('#f'), w); onSave(); });
+  }
+
+  function viewWallPreview(w) {
+    wallFormView(w, {
+      title: '確認', head: '自分の言葉になっているか確かめて、刻む', saveLabel: '刻む',
+      onBack: () => viewNew(w.id),
+      onSave: () => {
+        if (!store.putWall(w)) return;
+        store.removeDraft(w.id);
+        toast('壁を刻みました');
+        go('w/' + w.id);
+      }
+    });
+  }
+
+  function viewWallEdit(w) {
+    wallFormView(w, {
+      title: '編集', saveLabel: '保存',
+      onBack: () => viewWall(w.id),
+      onSave: () => { store.putWall(w); toast('保存しました'); viewWall(w.id); }
+    });
+  }
+
   /* ================= 原点に立ち返る (sheet) ================= */
   let sheetEls = null;
   function closeSheet() {
@@ -863,7 +1265,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   }
 
   // 下から出るシート。閉じたら詳細を再描画（記録が増えている可能性）
-  function openSheet(v, title, inner) {
+  function openSheet(rerender, title, inner) {
     closeSheet();
     const bg = document.createElement('div');
     bg.className = 'sheet-bg';
@@ -877,14 +1279,14 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     document.body.append(bg, sh);
     document.body.style.overflow = 'hidden';
     sheetEls = [bg, sh];
-    const close = () => { closeSheet(); if (location.hash.endsWith(v.id)) viewVision(v.id); };
+    const close = () => { closeSheet(); rerender(); };
     bg.addEventListener('click', close);
     $('[data-act="close"]', sh).addEventListener('click', close);
     return sh;
   }
 
-  function openNotes(v) {
-    const sh = openSheet(v, '記録', `<div class="scroll"><div class="notes"></div></div>${composerHtml('', '進捗、迷い、決めたこと')}`);
+  function openNotes(v, put, rerender) {
+    const sh = openSheet(rerender, '記録', `<div class="scroll"><div class="notes"></div></div>${composerHtml('', '進捗、迷い、決めたこと')}`);
     const list = $('.notes', sh);
     const scroller = $('.scroll', sh);
     const render = () => {
@@ -895,7 +1297,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       $$('[data-note-del]', list).forEach((b) => b.addEventListener('click', () => {
         if (!confirm('この記録を削除しますか？')) return;
         v.notes = v.notes.filter((n) => n.id !== b.dataset.noteDel);
-        store.put(v);
+        put(v);
         render();
       }));
       scroller.scrollTop = scroller.scrollHeight;
@@ -905,20 +1307,23 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     render();
     wireComposer(sh, (text) => {
       v.notes.push({ id: uid(), at: Date.now(), text });
-      store.put(v);
+      put(v);
       render();
       toast('記録しました');
     });
   }
 
-  function openLog(v) {
-    const sh = openSheet(v, '最初の対話', `<div class="scroll"><div class="chat"></div></div>`);
+  function openLog(v, rerender) {
+    const sh = openSheet(rerender, '最初の対話', `<div class="scroll"><div class="chat"></div></div>`);
     $('.chat', sh).innerHTML = v.transcript.map(msgHtml).join('');
   }
 
-  function openReturn(v) {
+  // w があれば、その壁を踏まえて相談する（記録は壁の側に残す）
+  function openReturn(v, rerender, w) {
+    const target = w || v;
+    const put = w ? store.putWall : store.put;
     const msgs = [{ role: 'ai', text: '何に迷っていますか。\n今の状況をそのまま書いてください。' }];
-    const sh = openSheet(v, '原点に立ち返る', `
+    const sh = openSheet(rerender, '原点に立ち返る', `
       <div class="scroll">
         ${v.core ? `<div class="anchor"><b>${fmtDate(v.createdAt)} の VISION</b>${esc(v.core)}</div>` : ''}
         <div class="chat"></div>
@@ -934,9 +1339,9 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       $$('.save-note', chat).forEach((b) => b.addEventListener('click', () => {
         const i = +b.dataset.i;
         const q = msgs[i - 1]?.role === 'me' ? msgs[i - 1].text : '';
-        v.notes = v.notes || [];
-        v.notes.push({ id: uid(), at: Date.now(), text: (q ? `迷い: ${q}\n` : '') + `振り返り: ${msgs[i].text}` });
-        store.put(v);
+        target.notes = target.notes || [];
+        target.notes.push({ id: uid(), at: Date.now(), text: (q ? `迷い: ${q}\n` : '') + `振り返り: ${msgs[i].text}` });
+        put(target);
         b.remove();
         toast('記録に残しました');
       }));
@@ -953,7 +1358,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
       try {
         const reply = await gemini({
-          system: sysReturn(v),
+          system: sysReturn(v, w),
           contents: [{ role: 'user', parts: [{ text: '（相談を始めます）' }] }, ...toContents(msgs)],
           temperature: 0.6
         });
