@@ -661,7 +661,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       <div class="field"><label><span>${icon('folder')}カテゴリ</span><input class="input" name="category" value="${esc(v.category)}" placeholder="例: アプリ作成"></label>
         <div class="cat-pick">${categories().map((c) => `<button type="button" class="${c === v.category ? 'on' : ''}" data-pick="${esc(c)}">${esc(c)}</button>`).join('')}</div>
       </div>
-      <label class="field"><span>${icon('compass')}核心</span><textarea class="input" name="core" rows="2">${esc(v.core)}</textarea></label>
+      <label class="field"><span>${icon('compass')}VISION</span><textarea class="input" name="core" rows="2">${esc(v.core)}</textarea></label>
       ${FIELDS.map(([k, l, ic]) => `<label class="field"><span>${icon(ic)}${l}</span><textarea class="input" name="${k}" rows="3">${esc(v[k])}</textarea></label>`).join('')}
       <label class="field"><span>${icon('shield')}譲れないこと</span><textarea class="input" name="essentials" rows="3" placeholder="1行に1つ">${esc((v.essentials || []).join('\n'))}</textarea></label>
       <label class="field"><span>${icon('tag')}キーワード</span><input class="input" name="keywords" value="${esc((v.keywords || []).join('、'))}" placeholder="、区切り"></label>`;
@@ -731,7 +731,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       <main class="view-enter">
         <div class="since"><span class="cat">${esc(catOf(v))}</span><span>·</span>${fmtDate(v.createdAt)}<span>·</span>${d === 0 ? '今日' : d + '日前'}</div>
         <h1 class="v-title">${esc(v.title)}</h1>
-        ${v.core ? `<p class="core">${esc(v.core)}</p>` : ''}
+        ${v.core ? `<div class="core-label">${icon('compass')}VISION</div><p class="core">${esc(v.core)}</p>` : ''}
         ${FIELDS.filter(([k]) => v[k]).map(([k, l, ic]) => `
           <section class="sec">${icon(ic)}<h4>${l}</h4><div class="body">${esc(v[k])}</div></section>`).join('')}
         ${(v.essentials || []).length ? `
@@ -841,7 +841,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         <button class="icon-btn" data-act="close" aria-label="閉じる">${icon('x')}</button>
       </header>
       <div class="scroll">
-        ${v.core ? `<div class="anchor"><b>${fmtDate(v.createdAt)} の核心</b>${esc(v.core)}</div>` : ''}
+        ${v.core ? `<div class="anchor"><b>${fmtDate(v.createdAt)} の VISION</b>${esc(v.core)}</div>` : ''}
         <div class="chat"></div>
       </div>
       ${composerHtml('', '今の迷い')}`;
