@@ -28,6 +28,10 @@
     database: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
     bookmark: '<path d="M6 4h12v17l-6-4-6 4z"/>',
     retry: '<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>',
+    cloud: '<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 1.6A3.3 3.3 0 0 0 7 18.5z"/>',
+    cloudOff: '<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.6 1.6A3.3 3.3 0 0 0 7 18.5z"/><path d="M4 4l16 16"/>',
+    folder: '<path d="M3.5 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h8a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+    logout: '<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14M10 16l-4-4 4-4M6 12h10"/>',
     resume: '<path d="M4 20h4L19 9l-4-4L4 16z"/>'
   };
   const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
@@ -64,6 +68,29 @@
     fit();
   }
 
+  /* ================= cloud sync (Firebase) ================= */
+  // firebase-config.js に設定があればGoogleログインで全端末に自動同期。なければこの端末のみに保存
+  const cloud = { enabled: !!window.FIREBASE_CONFIG, api: null, user: null, state: 'off' };
+  const ROOT = 'vision_memory_users';
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  function syncError(e) {
+    console.error(e);
+    cloud.state = 'error';
+    toast('同期できませんでした。電波状況を確認してください');
+  }
+  function cloudWrite(kind, item) {
+    if (!cloud.user) return;
+    const { fs, db } = cloud.api;
+    fs.setDoc(fs.doc(db, ROOT, cloud.user.uid, kind, item.id), plain(item)).catch(syncError);
+  }
+  // 削除は他の端末で復活しないよう「削除済み」として残す
+  const cloudDelete = (kind, id) => cloudWrite(kind, { id, deleted: true, updatedAt: Date.now() });
+  function cloudSettings(st) {
+    if (!cloud.user) return;
+    const { fs, db } = cloud.api;
+    fs.setDoc(fs.doc(db, ROOT, cloud.user.uid), { settings: plain(st) }, { merge: true }).catch(syncError);
+  }
+
   /* ================= storage (localStorage) ================= */
   const KEY = { visions: 'vm.visions', drafts: 'vm.drafts', oldDraft: 'vm.draft', settings: 'vm.settings' };
   const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } };
@@ -80,20 +107,37 @@
       const i = list.findIndex((x) => x.id === v.id);
       v.updatedAt = Date.now();
       if (i >= 0) list[i] = v; else list.unshift(v);
+      cloudWrite('visions', v);
       return save(KEY.visions, list);
     },
-    remove: (id) => save(KEY.visions, store.all().filter((v) => v.id !== id)),
+    remove(id) {
+      cloudDelete('visions', id);
+      return save(KEY.visions, store.all().filter((v) => v.id !== id));
+    },
     settings: () => ({ apiKey: '', model: 'gemini-flash-latest', ...load(KEY.settings, {}) }),
-    saveSettings: (s) => save(KEY.settings, s),
+    saveSettings(st) {
+      st.updatedAt = Date.now();
+      cloudSettings(st);
+      return save(KEY.settings, st);
+    },
     // 書きかけの対話（複数可）。発言のあるものだけ保存する
     drafts: () => load(KEY.drafts, []).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
     getDraft: (id) => store.drafts().find((d) => d.id === id),
     saveDraft(d) {
       d.updatedAt = Date.now();
+      cloudWrite('drafts', d);
       return save(KEY.drafts, [d, ...store.drafts().filter((x) => x.id !== d.id)]);
     },
-    removeDraft: (id) => save(KEY.drafts, store.drafts().filter((d) => d.id !== id)),
-    clearDrafts: () => localStorage.removeItem(KEY.drafts)
+    removeDraft(id) {
+      cloudDelete('drafts', id);
+      return save(KEY.drafts, store.drafts().filter((d) => d.id !== id));
+    },
+    wipe() {
+      store.all().forEach((v) => cloudDelete('visions', v.id));
+      store.drafts().forEach((d) => cloudDelete('drafts', d.id));
+      localStorage.removeItem(KEY.visions);
+      localStorage.removeItem(KEY.drafts);
+    }
   };
   // 旧形式（書きかけ1件のみ）からの移行
   (() => {
@@ -101,6 +145,91 @@
     if (old && old.msgs) store.saveDraft(old);
     localStorage.removeItem(KEY.oldDraft);
   })();
+  async function initCloud() {
+    if (!cloud.enabled) return;
+    cloud.state = 'loading';
+    try {
+      const base = 'https://www.gstatic.com/firebasejs/10.12.2/';
+      const [appMod, authMod, fs] = await Promise.all([
+        import(base + 'firebase-app.js'), import(base + 'firebase-auth.js'), import(base + 'firebase-firestore.js')
+      ]);
+      const fapp = appMod.initializeApp(window.FIREBASE_CONFIG);
+      cloud.api = { auth: authMod.getAuth(fapp), authMod, fs, db: fs.getFirestore(fapp) };
+      authMod.onAuthStateChanged(cloud.api.auth, onUser);
+    } catch (e) {
+      console.error(e);
+      cloud.state = 'error';
+      refreshView();
+    }
+  }
+
+  let unsubs = [];
+  async function onUser(user) {
+    unsubs.forEach((u) => u());
+    unsubs = [];
+    cloud.user = user;
+    cloud.state = user ? 'syncing' : 'off';
+    refreshView();
+    if (!user) return;
+    const { fs, db } = cloud.api;
+    try {
+      for (const kind of ['visions', 'drafts']) {
+        const col = fs.collection(db, ROOT, user.uid, kind);
+        const remote = new Map((await fs.getDocs(col)).docs.map((d) => [d.id, d.data()]));
+        // この端末にしかないもの・こちらが新しいものをアップロード
+        const local = load(KEY[kind], []);
+        await Promise.all(local
+          .filter((it) => { const r = remote.get(it.id); return !r || (it.updatedAt || 0) > (r.updatedAt || 0); })
+          .map((it) => fs.setDoc(fs.doc(col, it.id), plain(it))));
+        unsubs.push(fs.onSnapshot(col, (snap) => {
+          const items = snap.docs.map((d) => d.data()).filter((x) => !x.deleted);
+          if (kind === 'visions') items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          save(KEY[kind], items);
+          cloud.state = 'synced';
+          scheduleRefresh();
+        }, syncError));
+      }
+      const uref = fs.doc(db, ROOT, user.uid);
+      const us = await fs.getDoc(uref);
+      const rs = us.exists() ? us.data().settings : null;
+      const ls = load(KEY.settings, {});
+      if ((!rs || (ls.updatedAt || 0) > (rs.updatedAt || 0)) && (ls.apiKey || ls.model)) await fs.setDoc(uref, { settings: plain(ls) }, { merge: true });
+      unsubs.push(fs.onSnapshot(uref, (d) => {
+        const r = d.exists() ? d.data().settings : null;
+        const cur = load(KEY.settings, {});
+        if (r && ((r.updatedAt || 0) > (cur.updatedAt || 0) || (r.apiKey && !cur.apiKey))) { save(KEY.settings, r); scheduleRefresh(); }
+      }, syncError));
+    } catch (e) {
+      syncError(e);
+    }
+  }
+
+  async function login() {
+    const { auth, authMod } = cloud.api;
+    try {
+      await authMod.signInWithPopup(auth, new authMod.GoogleAuthProvider());
+    } catch (e) {
+      if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+      toast(e.code === 'auth/popup-blocked' ? 'ポップアップを許可してください' : 'ログインできませんでした');
+      console.error(e);
+    }
+  }
+
+  // 他の端末の変更を反映（入力中は邪魔しない）
+  let refreshTimer;
+  function scheduleRefresh() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshView, 250); }
+  function refreshView() {
+    const ae = document.activeElement;
+    if (ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) return;
+    const h = location.hash.replace(/^#\/?/, '');
+    if (h === '') viewHome();
+    else if (h === 'settings') viewSettings();
+    else if (h.startsWith('v/') && !sheetEls && $('.v-title')) {
+      if (cleanup) { cleanup(); cleanup = null; }
+      viewVision(h.split('/')[1]);
+    }
+  }
+
   // ブラウザによる自動削除を防ぐ
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
@@ -184,7 +313,7 @@
 - 5〜7問ほど聞けたら「ここまでをまとめましょうか」と提案する。
 - マークダウン、絵文字、箇条書きは使わない。日本語の自然な話し言葉で。`;
 
-  const SYS_SUMMARY = `あなたはユーザーとの対話から「ビジョン」を記録としてまとめる編集者です。
+  const sysSummary = (cats) => `あなたはユーザーとの対話から「ビジョン」を記録としてまとめる編集者です。
 目的: 数ヶ月後、技術的な問題や妥協で迷ったユーザーが、これを読んで最初の熱量と目的を思い出せること。
 ルール:
 - ユーザー自身の言葉・言い回し・熱量をできるだけそのまま残す。誇張しない、美化しない。
@@ -194,12 +323,14 @@
 - core: ビジョンの核心を1文で（60字以内）。迷った時に最初に読む一文。
 - why / excitement / future / inspiration: 各150字以内。
 - essentials: 絶対に妥協したくないこと。最大3つ、各40字以内。
-- keywords: 最大5つ。`;
+- keywords: 最大5つ。
+- category: このビジョンの分類。既存カテゴリ「${cats.join(' / ')}」から最も合うものを選ぶ。どれにも合わなければ新しい短い名前（8字以内。例: アプリ作成、動画制作、イベント）。`;
 
   const SUMMARY_SCHEMA = {
     type: 'OBJECT',
     properties: {
       title: { type: 'STRING' },
+      category: { type: 'STRING' },
       core: { type: 'STRING' },
       why: { type: 'STRING' },
       excitement: { type: 'STRING' },
@@ -208,8 +339,8 @@
       essentials: { type: 'ARRAY', items: { type: 'STRING' } },
       keywords: { type: 'ARRAY', items: { type: 'STRING' } }
     },
-    required: ['title', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords'],
-    propertyOrdering: ['title', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords']
+    required: ['title', 'category', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords'],
+    propertyOrdering: ['title', 'category', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords']
   };
 
   const sysReturn = (v) => `あなたは、プロジェクトの途中で迷っているユーザーを「原点」に立ち返らせる相談相手です。
@@ -339,16 +470,37 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   window.addEventListener('hashchange', route);
 
   /* ================= home ================= */
-  let filter = 'all';
   const STATUS = { active: '進行中', paused: '休止', done: '完了' };
+  const DEFAULT_CATS = ['アプリ作成', '動画制作'];
+  const UNCAT = '未分類';
+  const catOf = (v) => v.category || UNCAT;
+  const categories = () => [...new Set([...store.all().map((v) => v.category).filter(Boolean), ...DEFAULT_CATS])];
+  let catFilter = 'all';
+
+  function cardHtml(v) {
+    const st = v.status || 'active';
+    return `<button class="card ${esc(st)}" data-id="${esc(v.id)}">
+      <h3>${esc(v.title || '無題')}</h3>
+      <p>${esc(v.core)}</p>
+      <div class="meta"><span class="dot ${esc(st)}"></span>${STATUS[st]}<span>·</span>${fmtDate(v.createdAt)}</div>
+    </button>`;
+  }
 
   function viewHome() {
     const list = store.all();
     const drafts = store.drafts().filter((d) => d.msgs?.some((m) => m.role === 'me'));
-    const shown = filter === 'all' ? list : list.filter((v) => (v.status || 'active') === filter);
+    // カテゴリごとにまとめる（最近のビジョンがあるカテゴリが上、完了は各カテゴリの下）
+    const groups = new Map();
+    list.forEach((v) => { const c = catOf(v); if (!groups.has(c)) groups.set(c, []); groups.get(c).push(v); });
+    groups.forEach((g) => g.sort((a, b) => (a.status === 'done') - (b.status === 'done')));
+    if (catFilter !== 'all' && !groups.has(catFilter)) catFilter = 'all';
+    const syncIcon = cloud.enabled
+      ? `<button class="icon-btn sync ${cloud.user ? 'on' : ''}" data-go="settings" aria-label="同期">${icon(cloud.user ? 'cloud' : 'cloudOff')}</button>` : '';
+
     app.innerHTML = `
       <header class="bar">
         <div class="brand">${LOGO}<span>VISION</span></div>
+        ${syncIcon}
         <button class="icon-btn" data-go="settings" aria-label="設定">${icon('sliders')}</button>
       </header>
       <main class="view-enter">
@@ -362,22 +514,22 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
               </button>`).join('')}
           </div>` : ''}
         ${list.length ? `
-          <div class="seg" role="tablist">
-            ${[['all', 'すべて'], ['active', '進行中'], ['paused', '休止'], ['done', '完了']].map(([k, l]) => `<button class="${filter === k ? 'on' : ''}" data-filter="${k}">${l}</button>`).join('')}
+          <div class="cats" role="tablist">
+            <button class="${catFilter === 'all' ? 'on' : ''}" data-cat="all">すべて</button>
+            ${[...groups.keys()].map((c) => `<button class="${catFilter === c ? 'on' : ''}" data-cat="${esc(c)}">${esc(c)}<span>${groups.get(c).length}</span></button>`).join('')}
           </div>
-          <div class="list">
-            ${shown.map((v) => `
-              <button class="card" data-id="${esc(v.id)}">
-                <h3>${esc(v.title || '無題')}</h3>
-                <p>${esc(v.core)}</p>
-                <div class="meta"><span class="dot ${esc(v.status || 'active')}"></span>${STATUS[v.status || 'active']}<span>·</span>${fmtDate(v.createdAt)}</div>
-              </button>`).join('') || '<div class="empty"><p>該当なし</p></div>'}
-          </div>` : `
+          ${catFilter === 'all'
+            ? [...groups].map(([c, g]) => `
+              <section class="group">
+                <div class="group-head">${icon('folder')}${esc(c)}</div>
+                <div class="list">${g.map(cardHtml).join('')}</div>
+              </section>`).join('')
+            : `<div class="list">${groups.get(catFilter).map(cardHtml).join('')}</div>`}` : `
           ${drafts.length ? '' : `<div class="empty">${EMPTY_ART}<p>思いついたら、すぐ。</p></div>`}`}
       </main>
       <button class="fab" data-go="new" aria-label="新しいビジョン">${icon('plus')}</button>`;
     $$('[data-go]', app).forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
-    $$('[data-filter]', app).forEach((b) => b.addEventListener('click', () => { filter = b.dataset.filter; viewHome(); }));
+    $$('[data-cat]', app).forEach((b) => b.addEventListener('click', () => { catFilter = b.dataset.cat; viewHome(); }));
     $$('.card', app).forEach((b) => b.addEventListener('click', () => go('v/' + b.dataset.id)));
   }
 
@@ -457,7 +609,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     sumBtn.addEventListener('click', async () => {
       const userText = draft.msgs.filter((m) => m.role === 'me').map((m) => m.text);
       let v = {
-        id: draft.id, createdAt: draft.createdAt, status: 'active',
+        id: draft.id, createdAt: draft.createdAt, status: 'active', category: '',
         title: userText[0].slice(0, 20), core: userText[0], why: '', excitement: '', future: '', inspiration: '',
         essentials: [], keywords: [], transcript: draft.msgs, notes: []
       };
@@ -468,7 +620,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         sumBtn.innerHTML = `${icon('spark')}まとめています…`;
         try {
           const raw = await gemini({
-            system: SYS_SUMMARY,
+            system: sysSummary(categories()),
             contents: [...toContents([{ role: 'me', text: '（ビジョンの記録を始めます）' }, ...draft.msgs]), { role: 'user', parts: [{ text: 'ここまでの対話をビジョンとしてまとめてください。' }] }],
             schema: SUMMARY_SCHEMA,
             temperature: 0.4
@@ -490,7 +642,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     const s = (x) => stripMd(typeof x === 'string' ? x : '');
     const a = (x) => (Array.isArray(x) ? x.map(s).filter(Boolean) : []);
     return {
-      title: s(o.title), core: s(o.core), why: s(o.why), excitement: s(o.excitement),
+      title: s(o.title), category: s(o.category).slice(0, 12), core: s(o.core), why: s(o.why), excitement: s(o.excitement),
       future: s(o.future), inspiration: s(o.inspiration), essentials: a(o.essentials).slice(0, 5), keywords: a(o.keywords).slice(0, 8)
     };
   }
@@ -506,6 +658,9 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   function formHtml(v) {
     return `
       <label class="field"><span>タイトル</span><input class="input" name="title" value="${esc(v.title)}"></label>
+      <div class="field"><label><span>${icon('folder')}カテゴリ</span><input class="input" name="category" value="${esc(v.category)}" placeholder="例: アプリ作成"></label>
+        <div class="cat-pick">${categories().map((c) => `<button type="button" class="${c === v.category ? 'on' : ''}" data-pick="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      </div>
       <label class="field"><span>${icon('compass')}核心</span><textarea class="input" name="core" rows="2">${esc(v.core)}</textarea></label>
       ${FIELDS.map(([k, l, ic]) => `<label class="field"><span>${icon(ic)}${l}</span><textarea class="input" name="${k}" rows="3">${esc(v[k])}</textarea></label>`).join('')}
       <label class="field"><span>${icon('shield')}譲れないこと</span><textarea class="input" name="essentials" rows="3" placeholder="1行に1つ">${esc((v.essentials || []).join('\n'))}</textarea></label>
@@ -514,11 +669,20 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   function readForm(root, v) {
     const val = (n) => $(`[name="${n}"]`, root).value.trim();
     v.title = val('title') || '無題';
+    v.category = val('category');
     v.core = val('core');
     FIELDS.forEach(([k]) => (v[k] = val(k)));
     v.essentials = val('essentials').split('\n').map((s) => s.trim()).filter(Boolean);
     v.keywords = val('keywords').split(/[、,]/).map((s) => s.trim()).filter(Boolean);
     return v;
+  }
+
+  function wireForm(root) {
+    $$('textarea', root).forEach(autosize);
+    const cat = $('[name="category"]', root);
+    const sync = () => $$('[data-pick]', root).forEach((b) => b.classList.toggle('on', b.dataset.pick === cat.value.trim()));
+    $$('[data-pick]', root).forEach((b) => b.addEventListener('click', () => { cat.value = b.dataset.pick; sync(); }));
+    cat.addEventListener('input', sync);
   }
 
   function viewPreview(v) {
@@ -538,7 +702,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
           <button class="btn primary" data-act="save">${icon('check')}保存</button>
         </div>
       </main>`;
-    $$('textarea', app).forEach(autosize);
+    wireForm(app);
     $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', () => viewNew(v.id)));
     $('[data-act="save"]', app).addEventListener('click', () => {
       readForm($('#f'), v);
@@ -565,7 +729,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         <button class="icon-btn danger" data-act="del" aria-label="削除">${icon('trash')}</button>
       </header>
       <main class="view-enter">
-        <div class="since">${fmtDate(v.createdAt)}<span>·</span>${d === 0 ? '今日' : d + '日前'}</div>
+        <div class="since"><span class="cat">${esc(catOf(v))}</span><span>·</span>${fmtDate(v.createdAt)}<span>·</span>${d === 0 ? '今日' : d + '日前'}</div>
         <h1 class="v-title">${esc(v.title)}</h1>
         ${v.core ? `<p class="core">${esc(v.core)}</p>` : ''}
         ${FIELDS.filter(([k]) => v[k]).map(([k, l, ic]) => `
@@ -645,7 +809,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
           <button class="btn primary" data-act="save">${icon('check')}保存</button>
         </div>
       </main>`;
-    $$('textarea', app).forEach(autosize);
+    wireForm(app);
     $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', () => viewVision(v.id)));
     $('[data-act="save"]', app).addEventListener('click', () => {
       readForm($('#f'), v);
@@ -748,7 +912,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
               <input class="input" id="apiKey" type="password" autocomplete="off" spellcheck="false" value="${esc(s.apiKey)}" placeholder="AIza...">
               <button class="icon-btn" data-act="toggle" aria-label="表示切替">${icon('eye')}</button>
             </div>
-            <p class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で無料で取得できます。キーはこの端末にのみ保存されます。</p>
+            <p class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> で無料で取得できます。${cloud.user ? 'ログイン中は他の端末にも同期されます。' : 'キーはこの端末にのみ保存されます。'}</p>
           </label>
           <label class="field" style="margin-bottom:12px"><span>モデル</span>
             <input class="input" id="model" list="models" value="${esc(s.model)}" spellcheck="false">
@@ -760,13 +924,25 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         </section>
 
         <section class="panel">
-          <h3>${icon('database')}データ</h3>
-          <p class="hint" style="margin:0 0 14px">${count}件のビジョンをこのブラウザに保存中。機種変更やブラウザのデータ削除に備えて、定期的に書き出してください。</p>
-          <div class="row">
-            <button class="btn" data-act="export">${icon('download')}書き出し</button>
-            <button class="btn" data-act="import">${icon('upload')}読み込み</button>
-            <input type="file" id="file" accept="application/json,.json" hidden>
-          </div>
+          <h3>${icon('cloud')}保存と同期</h3>
+          ${!cloud.enabled ? `
+            <p class="hint" style="margin:0">${count}件をこのブラウザに保存中。同期は未設定です。</p>`
+          : cloud.user ? `
+            <div class="account"><span>${esc(cloud.user.email || cloud.user.displayName || '')}</span>
+              <button class="icon-btn" data-act="logout" aria-label="ログアウト">${icon('logout')}</button></div>
+            <p class="hint" style="margin:0">${count}件 · Googleアカウントに自動保存。どの端末でもログインすれば同じ内容が見られます。</p>`
+          : cloud.api ? `
+            <button class="btn primary block" data-act="login">${icon('cloud')}Googleでログインして同期</button>
+            <p class="hint">ログインすると自動で保存・同期されます。今この端末にある${count}件もそのまま引き継がれます。</p>`
+          : `<p class="hint" style="margin:0">${cloud.state === 'error' ? '同期の準備に失敗しました。再読み込みしてください。' : '準備中…'}</p>`}
+          <details class="backup">
+            <summary>${icon('chevron')}手動バックアップ</summary>
+            <div class="row" style="margin-top:12px">
+              <button class="btn" data-act="export">${icon('download')}書き出し</button>
+              <button class="btn" data-act="import">${icon('upload')}読み込み</button>
+              <input type="file" id="file" accept="application/json,.json" hidden>
+            </div>
+          </details>
         </section>
 
         <section class="panel">
@@ -778,6 +954,10 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     const modelIn = $('#model');
     const persist = () => store.saveSettings({ ...store.settings(), apiKey: keyIn.value.trim(), model: modelIn.value.trim() || 'gemini-flash-latest' });
     $('[data-act="back"]').addEventListener('click', () => go(''));
+    $('[data-act="login"]')?.addEventListener('click', login);
+    $('[data-act="logout"]')?.addEventListener('click', () => {
+      if (confirm('ログアウトしますか？\nこの端末のデータはそのまま残ります。')) cloud.api.authMod.signOut(cloud.api.auth);
+    });
     $('[data-act="toggle"]').addEventListener('click', (e) => { e.preventDefault(); keyIn.type = keyIn.type === 'password' ? 'text' : 'password'; });
     $('[data-act="save"]').addEventListener('click', () => { persist(); toast('保存しました'); });
     $('[data-act="test"]').addEventListener('click', async (e) => {
@@ -815,14 +995,14 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
           if (!cur || (v.updatedAt || 0) > (cur.updatedAt || 0)) { map.set(v.id, v); n++; }
         });
         save(KEY.visions, [...map.values()].sort((a, b) => b.createdAt - a.createdAt));
+        [...map.values()].forEach((v) => cloudWrite('visions', v));
         toast(`${n}件を読み込みました`);
         viewSettings();
       } catch { toast('ファイルを読み込めませんでした'); }
     });
     $('[data-act="wipe"]').addEventListener('click', () => {
       if (!confirm('すべてのビジョンを削除しますか？\n元に戻せません。')) return;
-      localStorage.removeItem(KEY.visions);
-      store.clearDrafts();
+      store.wipe();
       toast('削除しました');
       viewSettings();
     });
@@ -832,4 +1012,5 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   const ver = window.APP_VERSION || {};
   $('#version').textContent = `ver${ver.version || '0.0.0'} ${ver.deployedAt || ''}`;
   route();
+  initCloud();
 })();
