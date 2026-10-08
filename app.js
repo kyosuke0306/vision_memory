@@ -449,6 +449,9 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   window.addEventListener('orientationchange', () => { maxVH = 0; setTimeout(syncViewport, 300); });
   syncViewport();
 
+  // 画面を表示領域に固定するモード（chat-mode: 対話 / fit-mode: 詳細）
+  const setMode = (m) => { app.classList.remove('chat-mode', 'fit-mode'); if (m) app.classList.add(m); };
+
   /* ================= router ================= */
   const app = $('#app');
   let cleanup = null;
@@ -456,7 +459,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
   function route() {
     if (cleanup) { cleanup(); cleanup = null; }
     closeSheet();
-    app.classList.remove('chat-mode');
+    setMode();
     const h = location.hash.replace(/^#\/?/, '');
     const [name, id] = h.split('/');
     window.scrollTo(0, 0);
@@ -553,7 +556,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       <div class="chat" id="chat"></div>
       ${composerHtml(`<button class="pill" data-act="retry" hidden>${icon('retry')}もう一度聞く</button><button class="pill primary" data-act="summarize" disabled>${icon('spark')}まとめる</button>`)}`;
 
-    app.classList.add('chat-mode');
+    setMode('chat-mode');
     const chat = $('#chat');
     const sumBtn = $('[data-act="summarize"]');
     const retryBtn = $('[data-act="retry"]');
@@ -687,7 +690,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
 
   function viewPreview(v) {
     if (cleanup) { cleanup(); cleanup = null; }
-    app.classList.remove('chat-mode');
+    setMode();
     window.scrollTo(0, 0);
     app.innerHTML = `
       <header class="bar">
@@ -720,7 +723,14 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     if (!v) { go(''); return; }
     v.notes = v.notes || [];
     const d = daysSince(v.createdAt);
+    const st = v.status || 'active';
+    const items = [
+      ...FIELDS.filter(([k]) => v[k]).map(([k, l, ic]) => [l, ic, `<div class="body">${esc(v[k])}</div>`]),
+      ...((v.essentials || []).length ? [['譲れないこと', 'shield', `<ul>${v.essentials.map((e) => `<li>${esc(e)}</li>`).join('')}</ul>`]] : [])
+    ];
+    const talks = (v.transcript || []).length;
 
+    setMode('fit-mode');
     app.innerHTML = `
       <header class="bar">
         <button class="icon-btn" data-act="back" aria-label="戻る">${icon('back')}</button>
@@ -728,44 +738,26 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         <button class="icon-btn" data-act="edit" aria-label="編集">${icon('pencil')}</button>
         <button class="icon-btn danger" data-act="del" aria-label="削除">${icon('trash')}</button>
       </header>
-      <main class="view-enter">
-        <div class="since"><span class="cat">${esc(catOf(v))}</span><span>·</span>${fmtDate(v.createdAt)}<span>·</span>${d === 0 ? '今日' : d + '日前'}</div>
+      <main class="detail view-enter">
+        <div class="since">
+          <span class="cat">${esc(catOf(v))}</span><span>·</span>${fmtDate(v.createdAt)}<span>·</span>${d === 0 ? '今日' : d + '日前'}
+          <button class="st-pill" data-act="status" aria-label="状態を切り替え"><span class="dot ${st}"></span>${STATUS[st]}</button>
+        </div>
         <h1 class="v-title">${esc(v.title)}</h1>
         ${v.core ? `<div class="core-label">${icon('compass')}VISION</div><p class="core">${esc(v.core)}</p>` : ''}
-        ${FIELDS.filter(([k]) => v[k]).map(([k, l, ic]) => `
-          <section class="sec">${icon(ic)}<h4>${l}</h4><div class="body">${esc(v[k])}</div></section>`).join('')}
-        ${(v.essentials || []).length ? `
-          <section class="sec">${icon('shield')}<h4>譲れないこと</h4><ul>${v.essentials.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></section>` : ''}
-        ${(v.keywords || []).length ? `<div class="chips">${v.keywords.map((k) => `<span class="chip">${esc(k)}</span>`).join('')}</div>` : ''}
-
-        <button class="return-btn" data-act="return">${icon('compass')}原点に立ち返る</button>
-        <div class="status-row">
-          ${Object.entries(STATUS).map(([k, l]) => `<button class="${(v.status || 'active') === k ? 'on' : ''}" data-status="${k}">${l}</button>`).join('')}
+        <div class="acc">
+          ${items.map(([l, ic, body]) => `
+            <div class="acc-item">
+              <button class="acc-head">${icon(ic)}<span>${l}</span>${icon('chevron', 'chev')}</button>
+              <div class="acc-body">${body}</div>
+            </div>`).join('')}
         </div>
-
-        <div class="block-title">${icon('note')}記録</div>
-        <div class="notes">
-          ${v.notes.map((n) => `
-            <div class="note"><div class="tl"></div><div><time>${fmtDateTime(n.at)}</time><div class="txt">${esc(n.text)}</div></div>
-            <button class="icon-btn" data-note-del="${esc(n.id)}" aria-label="記録を削除">${icon('x')}</button></div>`).join('')}
+        <div class="detail-foot">
+          <button class="foot-btn" data-act="notes" aria-label="記録">${icon('note')}<span>記録${v.notes.length ? ` ${v.notes.length}` : ''}</span></button>
+          ${talks ? `<button class="foot-btn" data-act="log" aria-label="最初の対話">${icon('bookmark')}<span>対話</span></button>` : ''}
+          <button class="return-btn" data-act="return">${icon('compass')}原点に立ち返る</button>
         </div>
-        <div class="note-add">
-          <textarea class="input" rows="1" placeholder="進捗、迷い、決めたこと"></textarea>
-          <button class="icon-btn send" data-act="note" aria-label="記録を追加" disabled>${icon('plus')}</button>
-        </div>
-
-        ${(v.transcript || []).length ? `
-          <div class="block-title">${icon('bookmark')}最初の対話</div>
-          <details class="log"><summary>${icon('chevron')}${v.transcript.filter((m) => m.role === 'me').length}件の発言</summary>
-            <div class="chat">${v.transcript.map(msgHtml).join('')}</div>
-          </details>` : ''}
       </main>`;
-
-    // タイトルはスクロールしたらヘッダーに表示
-    const titleEl = $('.bar .title', app);
-    const onScroll = () => { titleEl.textContent = window.scrollY > 80 ? v.title : ''; };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    cleanup = () => window.removeEventListener('scroll', onScroll);
 
     $('[data-act="back"]').addEventListener('click', () => go(''));
     $('[data-act="del"]').addEventListener('click', () => {
@@ -773,29 +765,26 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     });
     $('[data-act="edit"]').addEventListener('click', () => viewEdit(v));
     $('[data-act="return"]').addEventListener('click', () => openReturn(v));
-    $$('[data-status]').forEach((b) => b.addEventListener('click', () => { v.status = b.dataset.status; store.put(v); viewVision(v.id); }));
-    $$('[data-note-del]').forEach((b) => b.addEventListener('click', () => {
-      if (!confirm('この記録を削除しますか？')) return;
-      v.notes = v.notes.filter((n) => n.id !== b.dataset.noteDel);
+    $('[data-act="notes"]').addEventListener('click', () => openNotes(v));
+    $('[data-act="log"]')?.addEventListener('click', () => openLog(v));
+    $('[data-act="status"]').addEventListener('click', () => {
+      const keys = Object.keys(STATUS);
+      v.status = keys[(keys.indexOf(st) + 1) % keys.length];
       store.put(v);
       viewVision(v.id);
-    }));
-    const nta = $('.note-add textarea');
-    const nbtn = $('[data-act="note"]');
-    autosize(nta);
-    nta.addEventListener('input', () => (nbtn.disabled = !nta.value.trim()));
-    nbtn.addEventListener('click', () => {
-      const text = nta.value.trim();
-      if (!text) return;
-      v.notes.push({ id: uid(), at: Date.now(), text });
-      store.put(v);
-      viewVision(v.id);
-      toast('記録しました');
+      toast(`${STATUS[v.status]}にしました`);
     });
+    // タップで開く（同時に開くのは1つ）
+    $$('.acc-item').forEach((it) => $('.acc-head', it).addEventListener('click', () => {
+      const open = !it.classList.contains('open');
+      $$('.acc-item').forEach((x) => x.classList.remove('open'));
+      it.classList.toggle('open', open);
+    }));
   }
 
   function viewEdit(v) {
     if (cleanup) { cleanup(); cleanup = null; }
+    setMode();
     window.scrollTo(0, 0);
     app.innerHTML = `
       <header class="bar">
@@ -829,29 +818,68 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     document.body.style.overflow = '';
   }
 
-  function openReturn(v) {
-    const msgs = [{ role: 'ai', text: '何に迷っていますか。\n今の状況をそのまま書いてください。' }];
+  // 下から出るシート。閉じたら詳細を再描画（記録が増えている可能性）
+  function openSheet(v, title, inner) {
+    closeSheet();
     const bg = document.createElement('div');
     bg.className = 'sheet-bg';
     const sh = document.createElement('div');
     sh.className = 'sheet';
     sh.innerHTML = `
       <header class="bar">
-        <div class="title">原点に立ち返る</div>
+        <div class="title">${title}</div>
         <button class="icon-btn" data-act="close" aria-label="閉じる">${icon('x')}</button>
-      </header>
+      </header>${inner}`;
+    document.body.append(bg, sh);
+    document.body.style.overflow = 'hidden';
+    sheetEls = [bg, sh];
+    const close = () => { closeSheet(); if (location.hash.endsWith(v.id)) viewVision(v.id); };
+    bg.addEventListener('click', close);
+    $('[data-act="close"]', sh).addEventListener('click', close);
+    return sh;
+  }
+
+  function openNotes(v) {
+    const sh = openSheet(v, '記録', `<div class="scroll"><div class="notes"></div></div>${composerHtml('', '進捗、迷い、決めたこと')}`);
+    const list = $('.notes', sh);
+    const scroller = $('.scroll', sh);
+    const render = () => {
+      list.innerHTML = v.notes.length ? v.notes.map((n) => `
+        <div class="note"><div class="tl"></div><div><time>${fmtDateTime(n.at)}</time><div class="txt">${esc(n.text)}</div></div>
+        <button class="icon-btn" data-note-del="${esc(n.id)}" aria-label="記録を削除">${icon('x')}</button></div>`).join('')
+        : '<p class="sheet-empty">まだ記録はありません</p>';
+      $$('[data-note-del]', list).forEach((b) => b.addEventListener('click', () => {
+        if (!confirm('この記録を削除しますか？')) return;
+        v.notes = v.notes.filter((n) => n.id !== b.dataset.noteDel);
+        store.put(v);
+        render();
+      }));
+      scroller.scrollTop = scroller.scrollHeight;
+    };
+    const keepEnd = () => { if (sheetEls) scroller.scrollTop = scroller.scrollHeight; };
+    onViewportChange.push(keepEnd);
+    render();
+    wireComposer(sh, (text) => {
+      v.notes.push({ id: uid(), at: Date.now(), text });
+      store.put(v);
+      render();
+      toast('記録しました');
+    });
+  }
+
+  function openLog(v) {
+    const sh = openSheet(v, '最初の対話', `<div class="scroll"><div class="chat"></div></div>`);
+    $('.chat', sh).innerHTML = v.transcript.map(msgHtml).join('');
+  }
+
+  function openReturn(v) {
+    const msgs = [{ role: 'ai', text: '何に迷っていますか。\n今の状況をそのまま書いてください。' }];
+    const sh = openSheet(v, '原点に立ち返る', `
       <div class="scroll">
         ${v.core ? `<div class="anchor"><b>${fmtDate(v.createdAt)} の VISION</b>${esc(v.core)}</div>` : ''}
         <div class="chat"></div>
       </div>
-      ${composerHtml('', '今の迷い')}`;
-    document.body.append(bg, sh);
-    document.body.style.overflow = 'hidden';
-    sheetEls = [bg, sh];
-    // 閉じたら詳細を再描画（記録が増えている可能性）
-    const close = () => { closeSheet(); if (location.hash.endsWith(v.id)) viewVision(v.id); };
-    bg.addEventListener('click', close);
-    $('[data-act="close"]', sh).addEventListener('click', close);
+      ${composerHtml('', '今の迷い')}`);
 
     const chat = $('.chat', sh);
     const scroller = $('.scroll', sh);
