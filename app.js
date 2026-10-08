@@ -300,18 +300,47 @@
 
   const OPENING = '何を思いつきましたか。\n一言でも、断片でも大丈夫です。';
 
+  // 記録に必要な情報（requiredがすべて埋まったら自動で記録へ）
+  const ASPECTS = [
+    ['what', '何を作る・始めるのか（具体的なもの）', true],
+    ['why', 'なぜやりたいのか（原動力）', true],
+    ['excitement', '何にワクワクしているのか', true],
+    ['future', '実現した未来の情景（誰が、どう使い、どう感じるか）', true],
+    ['essentials', '絶対に妥協したくないこと', true],
+    ['inspiration', '思いついたきっかけ', false]
+  ];
+  const REQUIRED = ASPECTS.filter((a) => a[2]).map((a) => a[0]);
+  const MAX_TURNS = 12; // これ以上は聞かずに記録へ
+
   const SYS_INTERVIEW = `あなたは、ユーザーが「思いついた瞬間のビジョン」を言葉にするのを手伝う聞き手です。
 ユーザーは何かを作る・始めることを思いついたばかりで、熱量はあるが、うまく説明できていません。
-後でプロジェクトに迷った時、ユーザーが原点に立ち返れる記録を残すことが目的です。
+目的は、後でプロジェクトに迷った時に原点へ立ち返れる記録を作ることです。そのために次の情報を集めます。
 
-ルール:
-- 一度に質問は1つだけ。質問は60字以内で短く。
-- 質問の前に、相手の言葉を20字以内で受け止める一文を添える。
-- 次の観点を、会話の流れに合わせて自然に掘り下げる: 何を作る/始めるのか、なぜやりたいのか（原動力）、何にワクワクしているのか、実現した未来の情景（誰が、どう使い、どう感じるか）、思いついたきっかけ、絶対に妥協したくないこと。
-- 技術的な実現性・コスト・難しさの話はしない。否定・評価・助言はしない。熱量を引き出すことに集中する。
-- 抽象的な答えには、具体的な場面や感覚を尋ねる。
-- 5〜7問ほど聞けたら「ここまでをまとめましょうか」と提案する。
-- マークダウン、絵文字、箇条書きは使わない。日本語の自然な話し言葉で。`;
+${ASPECTS.map(([k, l, r]) => `- ${k}: ${l}${r ? '' : '（任意。会話の中で自然に出なければ聞かなくてよい）'}`).join('\n')}
+
+毎回のやり方:
+1. これまでの会話全体を読み、各項目が十分に語られたかを判定して covered に入れる。1つの答えで複数の項目が埋まることもある。
+2. ユーザーがすでに話した内容は、二度と質問しない。
+3. 「十分」とは、後で本人が読んで当時の気持ちを思い出せる程度に具体的なこと。「楽しそう」「便利」のように抽象的なだけなら、具体的な場面や感覚を尋ねて深掘りする（同じ項目の深掘りは1回まで）。
+4. ユーザーが「特にない」「わからない」と答えた項目は、聞き直さず埋まったとみなす。
+5. まだ埋まっていない項目のうち、会話の流れで最も自然なものを1つだけ質問する。
+6. 必須項目（任意以外）がすべて埋まった時、またはユーザーが終えたい様子の時は done を true にする。その時の reply は質問せず、30字以内の短い締めの言葉にする。
+
+reply の書き方:
+- 相手の言葉を20字以内で受け止める一文 + 60字以内の質問1つ。
+- 技術的な実現性・コスト・難しさの話はしない。否定・評価・助言はしない。熱量を引き出す。
+- マークダウン・絵文字・箇条書きは使わない。日本語の自然な話し言葉で。`;
+
+  const INTERVIEW_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      covered: { type: 'OBJECT', properties: Object.fromEntries(ASPECTS.map(([k]) => [k, { type: 'BOOLEAN' }])), required: ASPECTS.map(([k]) => k) },
+      done: { type: 'BOOLEAN' },
+      reply: { type: 'STRING' }
+    },
+    required: ['covered', 'done', 'reply'],
+    propertyOrdering: ['covered', 'done', 'reply']
+  };
 
   const sysSummary = (cats) => `あなたはユーザーとの対話から「ビジョン」を記録としてまとめる編集者です。
 目的: 数ヶ月後、技術的な問題や妥協で迷ったユーザーが、これを読んで最初の熱量と目的を思い出せること。
@@ -552,20 +581,26 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         <div class="title">新しいビジョン</div>
         <button class="icon-btn" data-act="discard" aria-label="破棄">${icon('trash')}</button>
       </header>
+      <div class="progress" aria-label="聞き取りの進み具合">${REQUIRED.map((k) => `<i data-k="${k}"></i>`).join('')}</div>
       ${hasKey ? '' : `<div class="banner">${icon('key')}<span>Geminiを使うにはAPIキーが必要です</span><a href="#/settings">設定</a></div>`}
       <div class="chat" id="chat"></div>
-      ${composerHtml(`<button class="pill" data-act="retry" hidden>${icon('retry')}もう一度聞く</button><button class="pill primary" data-act="summarize" disabled>${icon('spark')}まとめる</button>`)}`;
+      ${composerHtml(`<button class="pill" data-act="next" hidden></button>`)}`;
 
     setMode('chat-mode');
     const chat = $('#chat');
-    const sumBtn = $('[data-act="summarize"]');
-    const retryBtn = $('[data-act="retry"]');
+    const nextBtn = $('[data-act="next"]');
     let busy = false;
+    let failed = false; // 記録への変換に失敗した
     const render = () => {
       chat.innerHTML = draft.msgs.map(msgHtml).join('');
-      sumBtn.disabled = busy || !draft.msgs.some((m) => m.role === 'me');
-      // 返答が来なかった時は、同じ内容を送り直さずに再試行できる
-      retryBtn.hidden = busy || !store.settings().apiKey || draft.msgs[draft.msgs.length - 1].role !== 'me';
+      const cov = draft.covered || {};
+      $$('.progress i').forEach((el) => el.classList.toggle('on', !!cov[el.dataset.k]));
+      // 返答が来なかった時は送り直さずに再試行。聞き終えた後は記録へ進める
+      const last = draft.msgs[draft.msgs.length - 1].role;
+      const mode = busy || !store.settings().apiKey ? '' : last === 'me' ? 'ask' : draft.done ? 'record' : '';
+      nextBtn.hidden = !mode;
+      nextBtn.dataset.mode = mode;
+      nextBtn.innerHTML = mode === 'ask' ? `${icon('retry')}もう一度聞く` : `${icon('spark')}${failed ? 'もう一度試す' : '記録へ進む'}`;
     };
     const scrollEnd = () => chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
     // キーボード開閉時も最新の質問が見えるように
@@ -575,69 +610,76 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     render();
     scrollEnd();
 
+    const setBusy = (b, label) => {
+      busy = b;
+      comp.busy(b);
+      render();
+      if (b) {
+        chat.insertAdjacentHTML('beforeend', label ? `<div class="msg ai typing-wrap status-line">${icon('spark')}${label}</div>` : typingHtml);
+        scrollEnd();
+      }
+    };
+
     const ask = async () => {
       if (!store.settings().apiKey) { render(); scrollEnd(); return; }
-      busy = true;
-      comp.busy(true);
-      render();
-      chat.insertAdjacentHTML('beforeend', typingHtml);
-      scrollEnd();
+      setBusy(true);
+      let finished = false;
       try {
-        const reply = await gemini({
+        const raw = await gemini({
           system: SYS_INTERVIEW,
-          contents: [{ role: 'user', parts: [{ text: '（ビジョンの記録を始めます）' }] }, ...toContents(draft.msgs)]
+          contents: [{ role: 'user', parts: [{ text: '（ビジョンの記録を始めます）' }] }, ...toContents(draft.msgs)],
+          schema: INTERVIEW_SCHEMA
         });
-        draft.msgs.push({ role: 'ai', text: stripMd(reply) });
+        const r = JSON.parse(raw);
+        draft.covered = r.covered || {};
+        const turns = draft.msgs.filter((m) => m.role === 'me').length;
+        finished = !!r.done || REQUIRED.every((k) => draft.covered[k]) || turns >= MAX_TURNS;
+        draft.done = finished;
+        draft.msgs.push({ role: 'ai', text: stripMd(r.reply) || (finished ? 'ありがとうございます。記録します。' : 'もう少し聞かせてください。') });
         persistDraft();
       } catch (e) {
         toast(e.message);
       }
-      busy = false;
-      comp.busy(false);
-      render();
+      setBusy(false);
       scrollEnd();
+      // 必要な情報がそろったら自動で記録へ
+      if (finished) record();
     };
+
+    const record = async () => {
+      setBusy(true, 'ビジョンを言葉にしています');
+      failed = false;
+      try {
+        const raw = await gemini({
+          system: sysSummary(categories()),
+          contents: [...toContents([{ role: 'me', text: '（ビジョンの記録を始めます）' }, ...draft.msgs]), { role: 'user', parts: [{ text: 'ここまでの対話をビジョンとしてまとめてください。' }] }],
+          schema: SUMMARY_SCHEMA,
+          temperature: 0.4
+        });
+        const v = {
+          id: draft.id, createdAt: draft.createdAt, status: 'active',
+          transcript: draft.msgs, notes: [], ...sanitize(JSON.parse(raw))
+        };
+        busy = false;
+        viewPreview(v);
+      } catch (e) {
+        toast(e.message);
+        failed = true;
+        setBusy(false);
+      }
+    };
+
     const comp = wireComposer(app, (text) => {
       draft.msgs.push({ role: 'me', text });
       persistDraft();
       ask();
     });
-    retryBtn.addEventListener('click', ask);
+    nextBtn.addEventListener('click', () => (nextBtn.dataset.mode === 'ask' ? ask() : record()));
     setTimeout(() => comp.ta.focus(), 50);
 
     $('[data-act="back"]').addEventListener('click', () => go(''));
     $('[data-act="discard"]').addEventListener('click', () => {
       if (!draft.msgs.some((m) => m.role === 'me') || confirm('この対話を破棄しますか？')) { store.removeDraft(draft.id); go(''); }
-    });
-    sumBtn.addEventListener('click', async () => {
-      const userText = draft.msgs.filter((m) => m.role === 'me').map((m) => m.text);
-      let v = {
-        id: draft.id, createdAt: draft.createdAt, status: 'active', category: '',
-        title: userText[0].slice(0, 20), core: userText[0], why: '', excitement: '', future: '', inspiration: '',
-        essentials: [], keywords: [], transcript: draft.msgs, notes: []
-      };
-      if (store.settings().apiKey) {
-        busy = true;
-        retryBtn.hidden = true;
-        sumBtn.disabled = true;
-        sumBtn.innerHTML = `${icon('spark')}まとめています…`;
-        try {
-          const raw = await gemini({
-            system: sysSummary(categories()),
-            contents: [...toContents([{ role: 'me', text: '（ビジョンの記録を始めます）' }, ...draft.msgs]), { role: 'user', parts: [{ text: 'ここまでの対話をビジョンとしてまとめてください。' }] }],
-            schema: SUMMARY_SCHEMA,
-            temperature: 0.4
-          });
-          Object.assign(v, sanitize(JSON.parse(raw)));
-        } catch (e) {
-          toast(e.message);
-          busy = false;
-          sumBtn.disabled = false;
-          sumBtn.innerHTML = `${icon('spark')}まとめる`;
-          return;
-        }
-      }
-      viewPreview(v);
     });
   }
 
@@ -698,11 +740,11 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         <div class="title">確認</div>
       </header>
       <main class="view-enter" style="padding-bottom:0">
-        <div class="preview-head">${icon('spark')}自分の言葉になっているか確認して保存</div>
+        <div class="preview-head">${icon('spark')}自分の言葉になっているか確かめて、刻む</div>
         <form id="f">${formHtml(v)}</form>
         <div class="sticky-actions">
           <button class="btn" data-act="back">対話に戻る</button>
-          <button class="btn primary" data-act="save">${icon('check')}保存</button>
+          <button class="btn primary" data-act="save">${icon('check')}刻む</button>
         </div>
       </main>`;
     wireForm(app);
@@ -711,7 +753,7 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       readForm($('#f'), v);
       if (store.put(v)) {
         store.removeDraft(v.id);
-        toast('ビジョンを記録しました');
+        toast('ビジョンを刻みました');
         go('v/' + v.id);
       }
     });

@@ -365,3 +365,12 @@ body.kb .detail-foot { padding-bottom: 10px; }
 .sheet-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 0; margin: 0; }
 main.detail > * { flex: none; }
 main.detail > .acc { flex: 0 1 auto; }
+
+/* ---------- 聞き取りの進み具合 ---------- */
+.progress { display: flex; gap: 4px; padding: 0 20px 6px; flex: none; }
+.progress i { flex: 1; height: 3px; border-radius: 3px; background: var(--line); transition: background .4s; }
+.progress i.on { background: var(--accent); }
+.status-line { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+.status-line::before { display: none !important; }
+.status-line svg.i { width: 17px; height: 17px; color: var(--accent); animation: spin 2.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
