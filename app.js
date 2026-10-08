@@ -665,6 +665,7 @@ ${visionText(v)}
         ${headerExtras()}
       </header>
       <main class="view-enter">
+        <p class="tagline">${icon('spark')}いちばん楽しい時間</p>
         ${draftsHtml(drafts)}
         ${list.length ? `
           <div class="cats" role="tablist">
@@ -1054,6 +1055,7 @@ ${visionText(v)}
         ${headerExtras()}
       </header>
       <main class="view-enter">
+        <p class="tagline">${icon('horizon')}前に進んでいる証</p>
         ${draftsHtml(drafts)}
         ${walls.length ? [...groups].map(([vid, g]) => {
           const v = store.get(vid);
