@@ -753,9 +753,11 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
             </div>`).join('')}
         </div>
         <div class="detail-foot">
-          <button class="foot-btn" data-act="notes" aria-label="記録">${icon('note')}<span>記録${v.notes.length ? ` ${v.notes.length}` : ''}</span></button>
-          ${talks ? `<button class="foot-btn" data-act="log" aria-label="最初の対話">${icon('bookmark')}<span>対話</span></button>` : ''}
           <button class="return-btn" data-act="return">${icon('compass')}原点に立ち返る</button>
+          <div class="foot-row">
+            <button class="foot-btn" data-act="notes">${icon('note')}<span>記録</span>${v.notes.length ? `<b>${v.notes.length}</b>` : ''}</button>
+            ${talks ? `<button class="foot-btn" data-act="log">${icon('bookmark')}<span>最初の対話</span></button>` : ''}
+          </div>
         </div>
       </main>`;
 

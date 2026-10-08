@@ -351,13 +351,15 @@ main.detail .core { font-size: 17px; line-height: 1.75; margin-bottom: 18px; }
 .acc-body ul { margin: 0; padding: 0; list-style: none; white-space: normal; }
 .acc-body li { position: relative; padding-left: 16px; }
 .acc-body li::before { content: ""; position: absolute; left: 0; top: .75em; width: 6px; height: 6px; border-radius: 1px; background: var(--accent); transform: rotate(45deg); }
-.detail-foot { margin-top: auto; display: flex; gap: 8px; align-items: stretch; padding: 14px 0 calc(var(--safe-b) + 24px); }
-.detail-foot .return-btn { flex: 1; margin: 0; padding: 14px; }
+.detail-foot { display: flex; flex-direction: column; gap: 8px; padding: 22px 0 calc(var(--safe-b) + 24px); }
+.detail-foot .return-btn { margin: 0; padding: 15px; }
+.foot-row { display: flex; gap: 8px; }
 .foot-btn {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  min-width: 58px; padding: 6px 8px; border-radius: var(--radius); background: var(--surface-2); color: var(--text); font-size: 11px;
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px; border-radius: var(--radius); background: var(--surface-2); color: var(--text); font-size: 13.5px;
 }
-.foot-btn svg.i { width: 19px; height: 19px; color: var(--accent); }
+.foot-btn svg.i { width: 18px; height: 18px; color: var(--accent); }
+.foot-btn b { font-weight: 500; font-size: 11px; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 body.kb .detail-foot { padding-bottom: 10px; }
 .sheet .notes { padding: 4px 20px; }
 .sheet-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 0; margin: 0; }
