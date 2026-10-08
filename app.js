@@ -27,6 +27,7 @@
     note: '<path d="M5 4h14v16H5z"/><path d="M9 9h6M9 13h6M9 17h3"/>',
     database: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
     bookmark: '<path d="M6 4h12v17l-6-4-6 4z"/>',
+    retry: '<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>',
     resume: '<path d="M4 20h4L19 9l-4-4L4 16z"/>'
   };
   const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
@@ -54,7 +55,7 @@
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+    toastTimer = setTimeout(() => el.classList.remove('show'), msg.length > 20 ? 4500 : 2400);
   }
 
   function autosize(ta) {
@@ -92,22 +93,57 @@
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
   /* ================= Gemini ================= */
+  // 混雑時に順に試すモデル（設定したモデルが最優先）
+  const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function friendlyError(status, msg = '') {
+    if (status === 503 || status === 500 || /overload|high demand|unavailable/i.test(msg)) return 'Geminiが混雑中です。少し待って再試行してください';
+    if (status === 429) return '利用回数の上限に達しました。しばらく待ってから再試行してください';
+    if (/api key|API_KEY/i.test(msg) || status === 401 || status === 403) return 'APIキーが無効です。設定を確認してください';
+    if (status === 404) return 'モデルが見つかりません。設定のモデル名を確認してください';
+    if (!status) return '通信できませんでした。電波状況を確認してください';
+    return `エラーが発生しました (${status})`;
+  }
+
+  async function callModel(model, apiKey, body) {
+    let res;
+    try {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body
+      });
+    } catch {
+      return { status: 0, message: '' };
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { status: res.status, message: data?.error?.message || '' };
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    const text = parts.filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
+    return text ? { text } : { status: 500, message: 'empty' };
+  }
+
   async function gemini({ system, contents, schema, temperature = 0.8 }) {
     const { apiKey, model } = store.settings();
     if (!apiKey) throw new Error('APIキーが未設定です');
     const generationConfig = { temperature };
     if (schema) { generationConfig.responseMimeType = 'application/json'; generationConfig.responseSchema = schema; }
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model || 'gemini-flash-latest')}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: mergeTurns(contents), generationConfig })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error?.message || `通信エラー (${res.status})`);
-    const parts = data?.candidates?.[0]?.content?.parts || [];
-    const text = parts.filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
-    if (!text) throw new Error('応答が空でした。もう一度お試しください');
-    return text;
+    const body = JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: mergeTurns(contents), generationConfig });
+    const models = [...new Set([model || FALLBACK_MODELS[0], ...FALLBACK_MODELS])];
+    let last = { status: 0, message: '' };
+    for (const m of models) {
+      // 一時的な混雑は同じモデルで1回だけ待って再試行し、だめなら次のモデルへ
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const r = await callModel(m, apiKey, body);
+        if (r.text) return r.text;
+        last = r;
+        if (r.status === 400 || r.status === 401 || r.status === 403) throw new Error(friendlyError(r.status, r.message));
+        if (r.status === 404 || r.status === 429) break;
+        if (attempt === 0) await sleep(800);
+      }
+    }
+    throw new Error(friendlyError(last.status, last.message));
   }
   // 同じroleが連続しないようにまとめる
   function mergeTurns(contents) {
@@ -338,14 +374,18 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       </header>
       ${hasKey ? '' : `<div class="banner">${icon('key')}<span>Geminiを使うにはAPIキーが必要です</span><a href="#/settings">設定</a></div>`}
       <div class="chat" id="chat"></div>
-      ${composerHtml(`<button class="pill primary" data-act="summarize" disabled>${icon('spark')}まとめる</button>`)}`;
+      ${composerHtml(`<button class="pill" data-act="retry" hidden>${icon('retry')}もう一度聞く</button><button class="pill primary" data-act="summarize" disabled>${icon('spark')}まとめる</button>`)}`;
 
     app.classList.add('chat-mode');
     const chat = $('#chat');
     const sumBtn = $('[data-act="summarize"]');
+    const retryBtn = $('[data-act="retry"]');
+    let busy = false;
     const render = () => {
       chat.innerHTML = draft.msgs.map(msgHtml).join('');
-      sumBtn.disabled = !draft.msgs.some((m) => m.role === 'me');
+      sumBtn.disabled = busy || !draft.msgs.some((m) => m.role === 'me');
+      // 返答が来なかった時は、同じ内容を送り直さずに再試行できる
+      retryBtn.hidden = busy || !store.settings().apiKey || draft.msgs[draft.msgs.length - 1].role !== 'me';
     };
     const scrollEnd = () => chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
     // キーボード開閉時も最新の質問が見えるように
@@ -355,12 +395,11 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
     render();
     scrollEnd();
 
-    const comp = wireComposer(app, async (text) => {
-      draft.msgs.push({ role: 'me', text });
-      store.saveDraft(draft);
-      render();
-      if (!store.settings().apiKey) { scrollEnd(); return; }
+    const ask = async () => {
+      if (!store.settings().apiKey) { render(); scrollEnd(); return; }
+      busy = true;
       comp.busy(true);
+      render();
       chat.insertAdjacentHTML('beforeend', typingHtml);
       scrollEnd();
       try {
@@ -373,10 +412,17 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
       } catch (e) {
         toast(e.message);
       }
+      busy = false;
       comp.busy(false);
       render();
       scrollEnd();
+    };
+    const comp = wireComposer(app, (text) => {
+      draft.msgs.push({ role: 'me', text });
+      store.saveDraft(draft);
+      ask();
     });
+    retryBtn.addEventListener('click', ask);
     setTimeout(() => comp.ta.focus(), 50);
 
     $('[data-act="back"]').addEventListener('click', () => go(''));
@@ -391,6 +437,8 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
         essentials: [], keywords: [], transcript: draft.msgs, notes: []
       };
       if (store.settings().apiKey) {
+        busy = true;
+        retryBtn.hidden = true;
         sumBtn.disabled = true;
         sumBtn.innerHTML = `${icon('spark')}まとめています…`;
         try {
@@ -402,7 +450,8 @@ ${(v.notes || []).length ? '\nその後の記録:\n' + v.notes.slice(-10).map((n
           });
           Object.assign(v, sanitize(JSON.parse(raw)));
         } catch (e) {
-          toast('まとめに失敗しました: ' + e.message);
+          toast(e.message);
+          busy = false;
           sumBtn.disabled = false;
           sumBtn.innerHTML = `${icon('spark')}まとめる`;
           return;

@@ -17,4 +17,4 @@ Settings → Pages → Source: `Deploy from a branch` → ブランチと `/ (ro
 ブラウザの localStorage に保存（サーバー不要）。設定画面からJSONで書き出し／読み込み可能。
 
 ## バージョン表示
-修正のたびに `version.js` の `version` と `deployedAt` を更新する。画面左下に `verx.x.x 日時` で表示。
+修正のたびに `version.js` の `version` と `deployedAt`、`index.html` の `?v=` を更新する。画面左下に `verx.x.x 日時` で表示。
