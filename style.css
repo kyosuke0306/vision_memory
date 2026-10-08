@@ -429,3 +429,26 @@ body.wall, .wall-theme { --accent: var(--wall); --accent-soft: color-mix(in srgb
 
 .tagline { display: flex; align-items: center; gap: 8px; margin: 2px 2px 16px; font-size: 12px; letter-spacing: .24em; color: var(--accent); }
 .tagline svg.i { width: 15px; height: 15px; }
+
+/* WALLはビジョン詳細で独立した行に */
+.wall-row {
+  display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+  padding: 13px; border-radius: var(--radius); font-weight: 500; letter-spacing: .14em;
+  color: var(--wall); background: color-mix(in srgb, var(--wall) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--wall) 35%, transparent);
+}
+.wall-row svg.i { width: 20px; height: 20px; }
+.wall-row b { font-weight: 500; font-size: 11px; letter-spacing: 0; min-width: 20px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--wall) 20%, transparent); }
+
+/* 見直し方の選択 */
+.sheet.sheet-short { top: auto; bottom: 0; height: auto; }
+.choice { display: grid; gap: 10px; padding: 4px 20px calc(var(--safe-b) + 26px); }
+.choice-btn { display: flex; align-items: center; gap: 14px; text-align: left; padding: 16px; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.choice-btn svg.i { width: 22px; height: 22px; color: var(--accent); }
+.choice-btn span { display: grid; gap: 2px; }
+.choice-btn b { font-size: 15px; font-weight: 500; }
+.choice-btn small { font-size: 12px; color: var(--muted); }
+.choice-btn.primary { background: var(--ink); color: var(--on-ink); }
+.choice-btn.primary small { color: color-mix(in srgb, var(--on-ink) 65%, transparent); }
+.choice .hint { margin: 2px 4px 0; }
+.draft em { font-style: normal; font-size: 11px; color: var(--accent); margin-right: 6px; }

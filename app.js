@@ -485,6 +485,34 @@ ${visionText(v)}
     propertyOrdering: ['title', 'wall', 'relation', 'targets', 'situation', 'cause', 'compromise', 'feeling', 'tried']
   };
 
+  /* ================= VISIONの見直し ================= */
+  const REVISE_OPENING = 'このビジョンの、どこを見直しますか。\n思うままに書いてください。';
+  const REVISE_ASPECTS = [
+    ['change', '何をどう変えたいのか（ビジョンのどの部分を、どんな言葉に）', true],
+    ['reason', 'なぜ変えたいのか（考えが深まった・広がったのか、状況に合わせたいのか）', true]
+  ];
+  const sysReviseInterview = (v) => `あなたは、ユーザーが以前刻んだビジョンを見直すのを手伝う聞き手です。
+現在のビジョン（${fmtDate(v.createdAt)} 記録）:
+
+${visionText(v)}
+
+目的は、ビジョンを今の想いに合わせて更新しつつ、最初の熱量を失わないことです。そのために次の情報を集めます。
+${interviewRules(REVISE_ASPECTS)}
+
+reply の書き方:
+- 相手の言葉を20字以内で受け止める一文 + 60字以内の質問1つ。
+- 変更を否定しない。ただし変更が「譲れないこと」や核心に関わる場合は、その言葉を「」で引用し、想いが深まった結果なのか、状況に合わせた結果なのかを一度だけ尋ねる。
+- マークダウン・絵文字・箇条書きは使わない。日本語の自然な話し言葉で。`;
+
+  const sysReviseSummary = (v, cats) => `${sysSummary(cats)}
+
+これはビジョンの見直しです。現在のビジョンは次の通り:
+${visionText(v)}
+カテゴリ: ${v.category || ''}
+
+- 対話で変更を求められた部分だけを書き換え、それ以外の項目は現在の内容をそのまま出力する。
+- 書き換える部分も、ユーザーの言葉を残す。`;
+
   /* ================= speech input ================= */
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   function attachMic(btn, ta) {
@@ -594,6 +622,7 @@ ${visionText(v)}
     setTheme(name === 'w' || name === 'wn' || (!name && page === 'wall') ? 'wall' : 'vision');
     if (name === 'new') viewNew();
     else if (name === 'wn' && id) viewNew(null, { kind: 'wall', visionId: id });
+    else if (name === 'rv' && id) viewNew(null, { kind: 'revise', visionId: id });
     else if (name === 'd' && id) viewNew(id);
     else if (name === 'v' && id) viewVision(id);
     else if (name === 'w' && id) viewWall(id);
@@ -635,7 +664,7 @@ ${visionText(v)}
       viewHome();
     });
   }
-  const userDrafts = (kind) => store.drafts().filter((d) => (d.kind || 'vision') === kind && d.msgs?.some((m) => m.role === 'me'));
+  const userDrafts = (...kinds) => store.drafts().filter((d) => kinds.includes(d.kind || 'vision') && d.msgs?.some((m) => m.role === 'me'));
   const headerExtras = () => (cloud.enabled
     ? `<button class="icon-btn sync ${cloud.user ? 'on' : ''}" data-go="settings" aria-label="同期">${icon(cloud.user ? 'cloud' : 'cloudOff')}</button>` : '')
     + `<button class="icon-btn" data-go="settings" aria-label="設定">${icon('sliders')}</button>`;
@@ -644,7 +673,7 @@ ${visionText(v)}
       <div class="drafts-head">書きかけ</div>
       ${drafts.map((d) => `
         <button class="draft" data-go="d/${esc(d.id)}">${icon('resume')}
-          <span>${esc(d.msgs.find((m) => m.role === 'me').text)}</span>
+          <span>${d.kind === 'revise' ? `<em>見直し</em>${esc(store.get(d.visionId)?.title || '')}：` : ''}${esc(d.msgs.find((m) => m.role === 'me').text)}</span>
           <time>${fmtDate(d.updatedAt || d.createdAt)}</time>
         </button>`).join('')}
     </div>` : '');
@@ -653,7 +682,7 @@ ${visionText(v)}
     setTheme(page);
     if (page === 'wall') return viewWallHome();
     const list = store.all();
-    const drafts = userDrafts('vision');
+    const drafts = userDrafts('vision', 'revise');
     // カテゴリごとにまとめる（最近のビジョンがあるカテゴリが上、完了は各カテゴリの下）
     const groups = new Map();
     list.forEach((v) => { const c = catOf(v); if (!groups.has(c)) groups.set(c, []); groups.get(c).push(v); });
@@ -706,6 +735,23 @@ ${visionText(v)}
         viewPreview({ id: draft.id, createdAt: draft.createdAt, status: 'active', transcript: draft.msgs, notes: [], ...sanitize(JSON.parse(raw)) });
       }
     },
+    revise: {
+      title: (d) => `${store.get(d.visionId)?.title || ''} を見直す`,
+      aspects: REVISE_ASPECTS,
+      sys: (d) => sysReviseInterview(store.get(d.visionId) || {}),
+      recording: 'ビジョンを書き直しています',
+      async record(draft) {
+        const cur = store.get(draft.visionId);
+        if (!cur) throw new Error('元のビジョンが見つかりません');
+        const raw = await gemini({
+          system: sysReviseSummary(cur, categories()),
+          contents: [...toContents([{ role: 'me', text: '（ビジョンの見直しを始めます）' }, ...draft.msgs]), { role: 'user', parts: [{ text: '見直した後のビジョン全体を出力してください。' }] }],
+          schema: SUMMARY_SCHEMA,
+          temperature: 0.3
+        });
+        viewPreview({ ...cur, ...sanitize(JSON.parse(raw)) }, { draftId: draft.id, revise: draft });
+      }
+    },
     wall: {
       title: (d) => `${store.get(d.visionId)?.title || ''} の壁`,
       aspects: WALL_ASPECTS,
@@ -727,7 +773,7 @@ ${visionText(v)}
   function viewNew(id, opts = {}) {
     const draft = (id && store.getDraft(id)) || {
       id: uid(), createdAt: Date.now(), kind: opts.kind || 'vision', visionId: opts.visionId,
-      msgs: [{ role: 'ai', text: opts.kind === 'wall' ? WALL_OPENING : OPENING }]
+      msgs: [{ role: 'ai', text: opts.kind === 'wall' ? WALL_OPENING : opts.kind === 'revise' ? REVISE_OPENING : OPENING }]
     };
     const K = KINDS[draft.kind || 'vision'];
     const REQ = K.aspects.filter((a) => a[2]).map((a) => a[0]);
@@ -884,7 +930,9 @@ ${visionText(v)}
     cat.addEventListener('input', sync);
   }
 
-  function viewPreview(v) {
+  // opts.revise: 見直しの場合（保存時に以前の内容を履歴に残す）
+  function viewPreview(v, opts = {}) {
+    const draftId = opts.draftId || v.id;
     if (cleanup) { cleanup(); cleanup = null; }
     setMode();
     window.scrollTo(0, 0);
@@ -894,7 +942,7 @@ ${visionText(v)}
         <div class="title">確認</div>
       </header>
       <main class="view-enter" style="padding-bottom:0">
-        <div class="preview-head">${icon('spark')}自分の言葉になっているか確かめて、刻む</div>
+        <div class="preview-head">${icon('spark')}${opts.revise ? '見直した内容を確かめて、刻む' : '自分の言葉になっているか確かめて、刻む'}</div>
         <form id="f">${formHtml(v)}</form>
         <div class="sticky-actions">
           <button class="btn" data-act="back">対話に戻る</button>
@@ -902,12 +950,19 @@ ${visionText(v)}
         </div>
       </main>`;
     wireForm(app);
-    $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', () => viewNew(v.id)));
+    $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', () => viewNew(draftId)));
     $('[data-act="save"]', app).addEventListener('click', () => {
+      if (opts.revise) {
+        // 原点を失わないよう、見直す前の内容と見直しの対話を履歴に残す
+        const before = store.get(v.id) || {};
+        const snap = { at: Date.now(), transcript: opts.revise.msgs };
+        ['title', 'category', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords'].forEach((k) => (snap[k] = before[k]));
+        v.history = [...(before.history || []), snap];
+      }
       readForm($('#f'), v);
       if (store.put(v)) {
-        store.removeDraft(v.id);
-        toast('ビジョンを刻みました');
+        store.removeDraft(draftId);
+        toast(opts.revise ? 'ビジョンを見直しました' : 'ビジョンを刻みました');
         go('v/' + v.id);
       }
     });
@@ -951,10 +1006,10 @@ ${visionText(v)}
         </div>
         <div class="detail-foot">
           <button class="return-btn" data-act="return">${icon('compass')}原点に立ち返る</button>
+          <button class="wall-row" data-act="walls">${icon('wall')}<span>WALL</span>${walls.length ? `<b>${walls.length}</b>` : ''}</button>
           <div class="foot-row">
             <button class="foot-btn" data-act="notes">${icon('note')}<span>記録</span>${v.notes.length ? `<b>${v.notes.length}</b>` : ''}</button>
             ${talks ? `<button class="foot-btn" data-act="log">${icon('bookmark')}<span>対話</span></button>` : ''}
-            <button class="foot-btn to-wall" data-act="walls">${icon('wall')}<span>WALL</span>${walls.length ? `<b>${walls.length}</b>` : ''}</button>
           </div>
         </div>
       </main>`;
@@ -969,7 +1024,7 @@ ${visionText(v)}
       toast('削除しました');
       go('');
     });
-    $('[data-act="edit"]').addEventListener('click', () => viewEdit(v));
+    $('[data-act="edit"]').addEventListener('click', () => openReviseChoice(v, again));
     $('[data-act="return"]').addEventListener('click', () => openReturn(v, again));
     $('[data-act="notes"]').addEventListener('click', () => openNotes(v, store.put, again));
     $('[data-act="log"]')?.addEventListener('click', () => openLog(v, again));
@@ -1008,7 +1063,13 @@ ${visionText(v)}
     wireForm(app);
     $$('[data-act="back"]', app).forEach((b) => b.addEventListener('click', () => viewVision(v.id)));
     $('[data-act="save"]', app).addEventListener('click', () => {
+      const snap = { at: Date.now() };
+      ['title', 'category', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords'].forEach((k) => (snap[k] = v[k]));
       readForm($('#f'), v);
+      // 内容が変わった時だけ履歴に残す
+      if (['title', 'category', 'core', 'why', 'excitement', 'future', 'inspiration', 'essentials', 'keywords'].some((k) => JSON.stringify(snap[k]) !== JSON.stringify(v[k]))) {
+        v.history = [...(v.history || []), snap];
+      }
       store.put(v);
       toast('保存しました');
       viewVision(v.id);
@@ -1313,6 +1374,19 @@ ${visionText(v)}
       render();
       toast('記録しました');
     });
+  }
+
+  // 見直し方を選ぶ（対話 / 直接編集）
+  function openReviseChoice(v, rerender) {
+    const sh = openSheet(rerender, 'ビジョンを見直す', `
+      <div class="choice">
+        <button class="choice-btn primary" data-act="talk">${icon('mic')}<span><b>対話で見直す</b><small>どこを、なぜ変えたいかを話して書き直す</small></span></button>
+        <button class="choice-btn" data-act="direct">${icon('pencil')}<span><b>直接編集する</b><small>言葉を自分で書き換える</small></span></button>
+        <p class="hint">見直す前の内容は履歴として残ります。</p>
+      </div>`);
+    sh.classList.add('sheet-short');
+    $('[data-act="talk"]', sh).addEventListener('click', () => { closeSheet(); go('rv/' + v.id); });
+    $('[data-act="direct"]', sh).addEventListener('click', () => { closeSheet(); viewEdit(v); });
   }
 
   function openLog(v, rerender) {
