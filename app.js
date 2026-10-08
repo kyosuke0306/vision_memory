@@ -665,7 +665,7 @@ ${visionText(v)}
         ${headerExtras()}
       </header>
       <main class="view-enter">
-        <p class="tagline">${icon('spark')}すべては、ここから</p>
+        <p class="tagline">${icon('spark')}ここが原点</p>
         ${draftsHtml(drafts)}
         ${list.length ? `
           <div class="cats" role="tablist">
